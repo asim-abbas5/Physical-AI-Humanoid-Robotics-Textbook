@@ -1,28 +1,9 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/main.py",
-      "use": "@vercel/python",
-      "config": {
-        "maxLambdaSize": "50mb"
-      }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/v1/(.*)",
-      "dest": "api/main.py"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "api/main.py"
-    }
-  ],
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "installCommand": "npm install",
+  "framework": "docusaurus-2",
   "env": {
-    "QDRANT_URL": "@qdrant-url",
-    "QDRANT_API_KEY": "@qdrant-api-key",
-    "DATABASE_URL": "@database-url",
-    "EMBEDDING_MODEL": "all-MiniLM-L6-v2"
+    "NODE_VERSION": "18"
   }
 }
