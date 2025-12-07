@@ -4,6 +4,6 @@
   "installCommand": "npm install",
   "framework": "docusaurus-2",
   "env": {
-    "NODE_VERSION": "18"
+    "NODE_VERSION": "20"
   }
 }
