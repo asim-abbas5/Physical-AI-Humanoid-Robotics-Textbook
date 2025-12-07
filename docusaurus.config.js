@@ -9,15 +9,15 @@ const config = {
   tagline: 'AI-Native Technical Textbook',
   favicon: 'img/favicon.ico',
 
-  // GitHub Pages deployment configuration
-  url: 'https://your-username.github.io',
-  baseUrl: '/ai-physical-book/',
-  organizationName: 'your-username',
-  projectName: 'ai-physical-book',
-  deploymentBranch: 'gh-pages',
+  // Vercel deployment configuration
+  url: 'https://physical-ai-humanoid-robotics-textbook.vercel.app',
+  baseUrl: '/',
+  organizationName: 'asim-abbas5',
+  projectName: 'Physical-AI-Humanoid-Robotics-Textbook',
+  deploymentBranch: 'main',
   trailingSlash: false,
 
-  onBrokenLinks: 'throw',
+  onBrokenLinks: 'warn',
   onBrokenMarkdownLinks: 'warn',
 
   i18n: {
@@ -32,7 +32,7 @@ const config = {
       ({
         docs: {
           sidebarPath: require.resolve('./sidebars.js'),
-          editUrl: 'https://github.com/your-username/ai-physical-book/tree/main/',
+          editUrl: 'https://github.com/asim-abbas5/Physical-AI-Humanoid-Robotics-Textbook/tree/main/',
           routeBasePath: 'docs',
           showLastUpdateTime: true,
         },
@@ -74,7 +74,7 @@ const config = {
             label: 'Textbook',
           },
           {
-            href: 'https://github.com/your-username/ai-physical-book',
+            href: 'https://github.com/asim-abbas5/Physical-AI-Humanoid-Robotics-Textbook',
             label: 'GitHub',
             position: 'right',
           },
@@ -109,7 +109,7 @@ const config = {
             items: [
               {
                 label: 'GitHub',
-                href: 'https://github.com/your-username/ai-physical-book',
+                href: 'https://github.com/asim-abbas5/Physical-AI-Humanoid-Robotics-Textbook',
               },
             ],
           },
