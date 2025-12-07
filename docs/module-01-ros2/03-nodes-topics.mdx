@@ -1,0 +1,750 @@
+---
+title: 'Nodes and Topics'
+description: 'Understanding the publish-subscribe architecture in ROS 2'
+---
+
+# Nodes and Topics
+
+## Overview
+
+At the heart of ROS 2 lies a powerful publish-subscribe messaging system that enables modular, distributed robot architectures. Nodes are independent processes that perform specific computations, while topics are named buses over which nodes exchange messages asynchronously. This decoupled design allows you to build complex robotic systems from reusable components.
+
+## What is a Node?
+
+A node in ROS 2 is an executable process that performs a specific task - reading sensor data, processing images, controlling motors, or planning paths. Nodes communicate with each other through topics, services, and actions, but each node can be developed, tested, and deployed independently.
+
+For example, in a humanoid robot, you might have separate nodes for:
+- Camera image acquisition
+- Object detection
+- Motion planning
+- Motor control
+- Battery monitoring
+
+This modular architecture means you can swap out the object detection algorithm without touching motion planning code.
+
+## Topics: Asynchronous Message Passing
+
+Topics implement a publish-subscribe pattern. A publisher node sends messages to a named topic (like `/camera/image_raw`), and any number of subscriber nodes can receive those messages. Publishers and subscribers don't know about each other - they only know the topic name and message type.
+
+This decoupling provides several benefits:
+- **Flexibility**: Add new subscribers without modifying publishers
+- **Scalability**: Multiple nodes can process the same sensor stream
+- **Fault Tolerance**: If a subscriber crashes, publishers continue unaffected
+
+## Creating a Publisher
+
+Let's create a simple publisher that broadcasts robot joint positions:
+
+```python
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+
+class JointPublisher(Node):
+    def __init__(self):
+        super().__init__('joint_publisher')
+        self.publisher = self.create_publisher(JointState, '/robot/joint_states', 10)
+        self.timer = self.create_timer(0.1, self.publish_joints)
+        self.get_logger().info('Joint publisher started')
+
+    def publish_joints(self):
+        msg = JointState()
+        msg.name = ['shoulder_roll', 'shoulder_pitch', 'elbow']
+        msg.position = [0.5, -0.2, 1.0]
+        self.publisher.publish(msg)
+
+def main():
+    rclpy.init()
+    node = JointPublisher()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+This node publishes joint states at 10Hz using a timer callback.
+
+## Creating a Subscriber
+
+Now let's subscribe to joint states and print them:
+
+```python
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+
+class JointSubscriber(Node):
+    def __init__(self):
+        super().__init__('joint_subscriber')
+        self.subscription = self.create_subscription(
+            JointState, '/robot/joint_states', self.joint_callback, 10
+        )
+
+    def joint_callback(self, msg):
+        self.get_logger().info(f'Received joints: {dict(zip(msg.name, msg.position))}')
+
+def main():
+    rclpy.init()
+    node = JointSubscriber()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+The subscriber's callback function executes every time a message arrives on the topic.
+
+## Quality of Service (QoS)
+
+The number `10` in the examples above is the queue size, part of ROS 2's Quality of Service (QoS) settings. QoS policies control reliability, durability, and latency - critical for real-time robotic systems.
+
+## Advanced Topic Patterns
+
+### Multi-Publisher, Multi-Subscriber
+
+One of ROS 2's strengths is the many-to-many communication pattern:
+
+```python
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+
+class SensorFusionNode(Node):
+    """Subscribes to multiple camera feeds and fuses data"""
+    def __init__(self):
+        super().__init__('sensor_fusion')
+
+        # Subscribe to multiple cameras
+        self.cam1_sub = self.create_subscription(
+            String, '/camera/front/image', self.cam1_callback, 10
+        )
+        self.cam2_sub = self.create_subscription(
+            String, '/camera/back/image', self.cam2_callback, 10
+        )
+
+        # Publish fused result
+        self.fused_pub = self.create_publisher(
+            String, '/fused_perception', 10
+        )
+
+        self.front_data = None
+        self.back_data = None
+
+    def cam1_callback(self, msg):
+        self.front_data = msg.data
+        self.fuse_and_publish()
+
+    def cam2_callback(self, msg):
+        self.back_data = msg.data
+        self.fuse_and_publish()
+
+    def fuse_and_publish(self):
+        if self.front_data and self.back_data:
+            fused_msg = String()
+            fused_msg.data = f"Fused: {self.front_data} + {self.back_data}"
+            self.fused_pub.publish(fused_msg)
+
+def main():
+    rclpy.init()
+    node = SensorFusionNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+### Publisher-Subscriber in Same Node
+
+Sometimes a node needs to both publish and subscribe:
+
+```python
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
+
+class ImageProcessor(Node):
+    """Processes images and publishes results"""
+    def __init__(self):
+        super().__init__('image_processor')
+
+        # Subscribe to raw images
+        self.image_sub = self.create_subscription(
+            Image,
+            '/camera/raw',
+            self.image_callback,
+            10
+        )
+
+        # Publish processed results
+        self.result_pub = self.create_publisher(
+            String,
+            '/detection/objects',
+            10
+        )
+
+        self.get_logger().info('Image processor ready')
+
+    def image_callback(self, msg):
+        # Process image (simplified)
+        detected_objects = self.detect_objects(msg)
+
+        # Publish results
+        result_msg = String()
+        result_msg.data = f"Detected: {detected_objects}"
+        self.result_pub.publish(result_msg)
+
+        self.get_logger().info(f'Processed image, found: {detected_objects}')
+
+    def detect_objects(self, image):
+        # Placeholder for object detection
+        return ['person', 'chair', 'table']
+
+def main():
+    rclpy.init()
+    node = ImageProcessor()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+---
+
+## Quality of Service (QoS) Deep Dive
+
+QoS policies are crucial for real-time robotics. Let's explore the key settings:
+
+### QoS Profiles
+
+```python
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
+
+# Sensor data: fast, lossy OK
+sensor_qos = QoSProfile(
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    durability=DurabilityPolicy.VOLATILE
+)
+
+# Command data: must be reliable
+command_qos = QoSProfile(
+    reliability=ReliabilityPolicy.RELIABLE,
+    history=HistoryPolicy.KEEP_LAST,
+    depth=10,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL
+)
+
+class RobotController(Node):
+    def __init__(self):
+        super().__init__('robot_controller')
+
+        # Sensor subscription with BEST_EFFORT
+        self.imu_sub = self.create_subscription(
+            Imu,
+            '/imu/data',
+            self.imu_callback,
+            sensor_qos
+        )
+
+        # Command publisher with RELIABLE
+        self.cmd_pub = self.create_publisher(
+            JointState,
+            '/joint_commands',
+            command_qos
+        )
+```
+
+### QoS Policy Breakdown
+
+| Policy | Options | Use Case |
+|--------|---------|----------|
+| **Reliability** | BEST_EFFORT, RELIABLE | Sensor streams vs Commands |
+| **Durability** | VOLATILE, TRANSIENT_LOCAL | Runtime only vs Late joiners |
+| **History** | KEEP_LAST, KEEP_ALL | Recent vs All messages |
+| **Depth** | 1-N | Queue size |
+
+**Example Use Cases:**
+
+- **Camera streams**: BEST_EFFORT (OK to drop frames)
+- **Joint commands**: RELIABLE (can't miss commands)
+- **Map data**: TRANSIENT_LOCAL (late joiners get map)
+- **IMU data**: KEEP_LAST with depth=1 (only latest)
+
+---
+
+## Debugging Topics
+
+### Command-Line Inspection
+
+```bash
+# List all active topics
+ros2 topic list
+
+# Show topic type
+ros2 topic type /joint_states
+
+# Echo messages in real-time
+ros2 topic echo /joint_states
+
+# Show topic info (publishers/subscribers)
+ros2 topic info /joint_states --verbose
+
+# Measure publishing rate
+ros2 topic hz /joint_states
+
+# Measure bandwidth
+ros2 topic bw /camera/image_raw
+
+# Publish test message
+ros2 topic pub /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.5}, angular: {z: 0.2}}"
+```
+
+### Programmatic Debugging
+
+```python
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import JointState
+
+class TopicMonitor(Node):
+    """Monitor topic health and statistics"""
+    def __init__(self):
+        super().__init__('topic_monitor')
+
+        self.subscription = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.callback,
+            10
+        )
+
+        self.msg_count = 0
+        self.last_time = self.get_clock().now()
+
+        # Timer to print statistics
+        self.timer = self.create_timer(1.0, self.print_stats)
+
+    def callback(self, msg):
+        self.msg_count += 1
+
+        # Check for anomalies
+        if len(msg.position) != len(msg.name):
+            self.get_logger().error('Mismatch in joint names and positions!')
+
+    def print_stats(self):
+        current_time = self.get_clock().now()
+        elapsed = (current_time - self.last_time).nanoseconds / 1e9
+
+        rate = self.msg_count / elapsed if elapsed > 0 else 0
+        self.get_logger().info(f'Topic rate: {rate:.2f} Hz, Total: {self.msg_count}')
+
+        self.msg_count = 0
+        self.last_time = current_time
+
+def main():
+    rclpy.init()
+    node = TopicMonitor()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+---
+
+## Custom Message Types
+
+### Creating Custom Messages
+
+First, create a package for messages:
+
+```bash
+cd ~/ros2_ws/src
+ros2 pkg create --build-type ament_cmake humanoid_msgs
+cd humanoid_msgs
+mkdir msg
+```
+
+Create `msg/RobotStatus.msg`:
+
+```
+# Robot health and status message
+Header header
+
+# Battery
+float32 battery_voltage
+float32 battery_percentage
+
+# Temperature
+float32 cpu_temperature
+float32[] motor_temperatures
+
+# Operational status
+uint8 MODE_IDLE=0
+uint8 MODE_STANDING=1
+uint8 MODE_WALKING=2
+uint8 MODE_EMERGENCY=3
+
+uint8 current_mode
+bool is_emergency_stopped
+string[] active_errors
+```
+
+Update `CMakeLists.txt`:
+
+```cmake
+find_package(rosidl_default_generators REQUIRED)
+find_package(std_msgs REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/RobotStatus.msg"
+  DEPENDENCIES std_msgs
+)
+```
+
+Update `package.xml`:
+
+```xml
+<buildtool_depend>ament_cmake</buildtool_depend>
+<build_depend>rosidl_default_generators</build_depend>
+<exec_depend>rosidl_default_runtime</exec_depend>
+<member_of_group>rosidl_interface_packages</member_of_group>
+<depend>std_msgs</depend>
+```
+
+Build:
+
+```bash
+cd ~/ros2_ws
+colcon build --packages-select humanoid_msgs
+source install/setup.bash
+```
+
+### Using Custom Messages
+
+```python
+import rclpy
+from rclpy.node import Node
+from humanoid_msgs.msg import RobotStatus
+
+class StatusPublisher(Node):
+    def __init__(self):
+        super().__init__('status_publisher')
+
+        self.publisher = self.create_publisher(
+            RobotStatus,
+            '/robot/status',
+            10
+        )
+
+        self.timer = self.create_timer(1.0, self.publish_status)
+
+    def publish_status(self):
+        msg = RobotStatus()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = 'base_link'
+
+        msg.battery_voltage = 12.6
+        msg.battery_percentage = 85.0
+        msg.cpu_temperature = 45.5
+        msg.motor_temperatures = [38.2, 42.1, 40.5, 39.8]
+
+        msg.current_mode = RobotStatus.MODE_STANDING
+        msg.is_emergency_stopped = False
+        msg.active_errors = []
+
+        self.publisher.publish(msg)
+        self.get_logger().info(f'Published status: {msg.battery_percentage}%')
+
+def main():
+    rclpy.init()
+    node = StatusPublisher()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+---
+
+## Practical Exercise: Build a Sensor Monitoring System
+
+### Goal
+
+Create a complete monitoring system with:
+1. Multiple sensor publishers (temperature, pressure, vibration)
+2. Central monitoring node that aggregates data
+3. Alert system for anomalies
+
+### Step 1: Temperature Sensor
+
+```python title="temperature_sensor.py"
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32
+import random
+
+class TemperatureSensor(Node):
+    def __init__(self):
+        super().__init__('temperature_sensor')
+
+        # Declare parameters
+        self.declare_parameter('sensor_id', 'temp_01')
+        self.declare_parameter('publish_rate', 10.0)
+
+        sensor_id = self.get_parameter('sensor_id').value
+        rate = self.get_parameter('publish_rate').value
+
+        self.publisher = self.create_publisher(
+            Float32,
+            f'/sensors/{sensor_id}/temperature',
+            10
+        )
+
+        self.timer = self.create_timer(1.0 / rate, self.publish_reading)
+        self.temperature = 20.0
+
+        self.get_logger().info(f'Temperature sensor {sensor_id} started at {rate}Hz')
+
+    def publish_reading(self):
+        # Simulate temperature drift and noise
+        self.temperature += random.gauss(0, 0.5)
+        self.temperature = max(15.0, min(35.0, self.temperature))
+
+        msg = Float32()
+        msg.data = self.temperature
+        self.publisher.publish(msg)
+
+def main():
+    rclpy.init()
+    node = TemperatureSensor()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+### Step 2: Monitoring Dashboard
+
+```python title="sensor_monitor.py"
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import Float32
+from collections import defaultdict
+import time
+
+class SensorMonitor(Node):
+    def __init__(self):
+        super().__init__('sensor_monitor')
+
+        # Track all sensors
+        self.sensors = defaultdict(lambda: {'value': 0.0, 'last_update': 0.0})
+
+        # Subscribe to all temperature topics (using wildcards in practice)
+        self.create_subscription(Float32, '/sensors/temp_01/temperature',
+                                lambda msg: self.sensor_callback('temp_01', msg), 10)
+        self.create_subscription(Float32, '/sensors/temp_02/temperature',
+                                lambda msg: self.sensor_callback('temp_02', msg), 10)
+
+        # Status timer
+        self.timer = self.create_timer(2.0, self.print_dashboard)
+
+        self.get_logger().info('Sensor monitor started')
+
+    def sensor_callback(self, sensor_id, msg):
+        self.sensors[sensor_id] = {
+            'value': msg.data,
+            'last_update': time.time()
+        }
+
+        # Check for alerts
+        if msg.data > 30.0:
+            self.get_logger().warn(f'HIGH TEMPERATURE ALERT: {sensor_id} = {msg.data:.2f}°C')
+        elif msg.data < 18.0:
+            self.get_logger().warn(f'LOW TEMPERATURE ALERT: {sensor_id} = {msg.data:.2f}°C')
+
+    def print_dashboard(self):
+        self.get_logger().info('=== Sensor Dashboard ===')
+
+        current_time = time.time()
+        for sensor_id, data in self.sensors.items():
+            age = current_time - data['last_update']
+            status = 'OK' if age < 1.0 else 'STALE'
+
+            self.get_logger().info(
+                f"{sensor_id}: {data['value']:.2f}°C [{status}] (age: {age:.1f}s)"
+            )
+
+def main():
+    rclpy.init()
+    node = SensorMonitor()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+### Step 3: Run the System
+
+```bash
+# Terminal 1: Sensor 1
+ros2 run my_package temperature_sensor --ros-args -p sensor_id:=temp_01 -p publish_rate:=5.0
+
+# Terminal 2: Sensor 2
+ros2 run my_package temperature_sensor --ros-args -p sensor_id:=temp_02 -p publish_rate:=5.0
+
+# Terminal 3: Monitor
+ros2 run my_package sensor_monitor
+
+# Terminal 4: Check topics
+ros2 topic list
+ros2 topic echo /sensors/temp_01/temperature
+```
+
+---
+
+## Performance Optimization
+
+### Reduce Callback Overhead
+
+```python
+class OptimizedNode(Node):
+    def __init__(self):
+        super().__init__('optimized_node')
+
+        # Use callback groups for parallel execution
+        from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+
+        self.cb_group = MutuallyExclusiveCallbackGroup()
+
+        self.subscription = self.create_subscription(
+            String,
+            '/topic',
+            self.callback,
+            10,
+            callback_group=self.cb_group
+        )
+
+    def callback(self, msg):
+        # Process efficiently
+        pass
+```
+
+### Message Filtering
+
+```python
+class FilteredSubscriber(Node):
+    def __init__(self):
+        super().__init__('filtered_subscriber')
+
+        self.subscription = self.create_subscription(
+            JointState,
+            '/joint_states',
+            self.callback,
+            10
+        )
+
+        self.last_process_time = self.get_clock().now()
+        self.min_interval = 0.1  # 10 Hz max
+
+    def callback(self, msg):
+        current_time = self.get_clock().now()
+        elapsed = (current_time - self.last_process_time).nanoseconds / 1e9
+
+        # Throttle processing
+        if elapsed < self.min_interval:
+            return
+
+        self.process_message(msg)
+        self.last_process_time = current_time
+
+    def process_message(self, msg):
+        # Heavy computation here
+        pass
+```
+
+---
+
+## Common Patterns and Anti-Patterns
+
+### ✅ Good Patterns
+
+```python
+# Pattern 1: Stateful processing
+class StatefulProcessor(Node):
+    def __init__(self):
+        super().__init__('processor')
+        self.state = []
+
+        self.subscription = self.create_subscription(
+            String, '/input', self.callback, 10
+        )
+
+    def callback(self, msg):
+        # Update state
+        self.state.append(msg.data)
+
+        # Process with context
+        if len(self.state) > 10:
+            self.process_batch(self.state[-10:])
+
+# Pattern 2: Lifecycle management
+class ManagedNode(Node):
+    def __init__(self):
+        super().__init__('managed')
+        self.subscription = None
+
+    def start(self):
+        self.subscription = self.create_subscription(...)
+        self.get_logger().info('Started')
+
+    def stop(self):
+        if self.subscription:
+            self.destroy_subscription(self.subscription)
+        self.get_logger().info('Stopped')
+```
+
+### ❌ Anti-Patterns to Avoid
+
+```python
+# AVOID: Blocking in callbacks
+class BadNode(Node):
+    def callback(self, msg):
+        time.sleep(5)  # ❌ Blocks executor!
+        self.process(msg)
+
+# AVOID: Heavy computation in callbacks
+class BadNode2(Node):
+    def callback(self, msg):
+        # ❌ Slows down message processing
+        for i in range(1000000):
+            expensive_operation()
+
+# AVOID: Shared state without synchronization
+class BadNode3(Node):
+    def __init__(self):
+        self.shared_data = []
+
+    def callback1(self, msg):
+        self.shared_data.append(msg)  # ❌ Race condition
+
+    def callback2(self, msg):
+        if self.shared_data:  # ❌ Race condition
+            self.process(self.shared_data[0])
+```
+
+---
+
+## Key Takeaways
+
+- Nodes are independent processes that perform specific robot functions
+- Topics enable asynchronous, many-to-many communication between nodes
+- Publishers and subscribers are decoupled through named topics
+- QoS policies ensure messages meet reliability and latency requirements
+- Custom messages enable domain-specific communication
+- Proper error handling and monitoring are essential for production systems
+- Performance optimization through throttling, batching, and efficient callbacks
+
+## References
+
+- [ROS 2 Nodes Documentation](https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Nodes/Understanding-ROS2-Nodes.html)
+- [ROS 2 Topics Documentation](https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Topics/Understanding-ROS2-Topics.html)
+- [rclpy API Reference](https://docs.ros.org/en/humble/p/rclpy/api.html)
+- [QoS Documentation](https://docs.ros.org/en/humble/Concepts/About-Quality-of-Service-Settings.html)
+
+## Exercises
+
+1. Create a multi-sensor fusion node that subscribes to 3+ sensors
+2. Implement a data logger that records all messages to a file
+3. Build a topic relay that transforms messages between different types
+4. Create a watchdog node that monitors topic health and publishes alerts
+
+## Next Steps
+
+In the next section, we'll explore Services and Actions for synchronous request-response patterns and long-running tasks.

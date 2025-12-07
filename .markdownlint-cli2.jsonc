@@ -1,0 +1,23 @@
+{
+  "config": {
+    "default": true,
+    "MD001": true,
+    "MD003": { "style": "atx" },
+    "MD013": false,
+    "MD024": { "siblings_only": true },
+    "MD033": {
+      "allowed_elements": [
+        "details",
+        "summary",
+        "Tabs",
+        "TabItem",
+        "Admonition",
+        "Image"
+      ]
+    },
+    "MD041": false,
+    "MD046": { "style": "fenced" }
+  },
+  "globs": ["**/*.{md,mdx}"],
+  "ignores": ["node_modules", ".github", "build", ".docusaurus"]
+}

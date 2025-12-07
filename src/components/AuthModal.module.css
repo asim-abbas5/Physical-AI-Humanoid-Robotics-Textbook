@@ -1,0 +1,304 @@
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modalContent {
+  background: linear-gradient(135deg, #ffffff 0%, #f7fafc 100%);
+  padding: 2rem;
+  border-radius: 12px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.15);
+  border: 1px solid rgba(102, 126, 234, 0.1);
+  transition: all 0.5s ease;
+}
+
+.modalContent:has(input:focus) {
+  background: linear-gradient(135deg, #f0f4ff 0%, #e6f0ff 100%);
+  box-shadow: 0 12px 40px rgba(102, 126, 234, 0.25);
+  border-color: rgba(102, 126, 234, 0.3);
+}
+
+.modalContent:has(input:not(:placeholder-shown)) {
+  background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+  box-shadow: 0 12px 40px rgba(139, 92, 246, 0.2);
+}
+
+[data-theme='dark'] .modalContent {
+  background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
+}
+
+[data-theme='dark'] .modalContent:has(input:focus) {
+  background: linear-gradient(135deg, #2d3748 0%, #4a5568 100%);
+}
+
+[data-theme='dark'] .modalContent:has(input:not(:placeholder-shown)) {
+  background: linear-gradient(135deg, #312e81 0%, #4c1d95 100%);
+}
+
+.closeButton {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: none;
+  border: none;
+  font-size: 2rem;
+  cursor: pointer;
+  color: var(--ifm-color-emphasis-600);
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.closeButton:hover {
+  color: var(--ifm-color-primary);
+}
+
+.modalContent h2 {
+  margin-top: 0;
+  margin-bottom: 1.5rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-weight: 700;
+  transition: all 0.4s ease;
+}
+
+.modalContent:has(input:not(:placeholder-shown)) h2 {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  transform: scale(1.02);
+}
+
+.formGroup {
+  margin-bottom: 1.5rem;
+}
+
+.formGroup label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+  color: #4a5568;
+  transition: all 0.3s ease;
+  font-size: 0.9rem;
+}
+
+.formGroup:has(input:focus) label,
+.formGroup:has(select:focus) label {
+  color: #667eea;
+  transform: translateX(4px);
+}
+
+.formGroup:has(input:not(:placeholder-shown)) label,
+.formGroup:has(select:not([value=""])) label {
+  color: #8b5cf6;
+  font-weight: 700;
+}
+
+.formGroup input,
+.formGroup select {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 2px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 1rem;
+  transition: all 0.4s ease;
+  background: #ffffff;
+  color: var(--ifm-font-color-base);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.formGroup input:focus,
+.formGroup select:focus {
+  outline: none;
+  border-color: #667eea;
+  background: linear-gradient(135deg, #ffffff 0%, #f0f4ff 100%);
+  box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.15), 0 4px 12px rgba(102, 126, 234, 0.2);
+  transform: scale(1.02);
+}
+
+.formGroup input:not(:placeholder-shown),
+.formGroup select:not([value=""]) {
+  border-color: #8b5cf6;
+  background: linear-gradient(135deg, #faf5ff 0%, #ffffff 100%);
+  box-shadow: 0 4px 8px rgba(139, 92, 246, 0.15);
+  font-weight: 500;
+}
+
+.formGroup input:not(:placeholder-shown):focus,
+.formGroup select:not([value=""]):focus {
+  border-color: #f093fb;
+  background: linear-gradient(135deg, #faf5ff 0%, #fce7f3 100%);
+  box-shadow: 0 0 0 4px rgba(240, 147, 251, 0.2), 0 8px 16px rgba(245, 87, 108, 0.2);
+}
+
+.formGroup input::placeholder {
+  color: #cbd5e0;
+  transition: color 0.3s ease;
+}
+
+.formGroup input:focus::placeholder {
+  color: #a0aec0;
+}
+
+/* Password input with toggle button */
+.passwordInputWrapper {
+  position: relative;
+  width: 100%;
+}
+
+.passwordInput {
+  padding-right: 3rem !important;
+}
+
+.passwordToggle {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #a0aec0;
+  padding: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  border-radius: 4px;
+}
+
+.passwordToggle:hover {
+  color: #667eea;
+  background: rgba(102, 126, 234, 0.1);
+}
+
+.passwordToggle:active {
+  transform: translateY(-50%) scale(0.95);
+}
+
+.passwordToggle svg {
+  display: block;
+}
+
+.submitButton {
+  width: 100%;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #cbd5e0 0%, #a0aec0 100%);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.4s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.submitButton::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  transition: left 0.4s ease;
+  z-index: -1;
+}
+
+.submitButton:hover::before {
+  left: 0;
+}
+
+.submitButton:hover:not(:disabled) {
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  transform: translateY(-2px);
+}
+
+.submitButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e0 100%);
+}
+
+/* Active state when form is being filled */
+.submitButton:not(:disabled) {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 2px 4px rgba(102, 126, 234, 0.2);
+  }
+  50% {
+    box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+  }
+}
+
+.error {
+  background-color: #fee;
+  color: #c33;
+  padding: 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  border: 1px solid #fcc;
+}
+
+.stepInfo {
+  margin-bottom: 1.5rem;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.95rem;
+}
+
+.buttonGroup {
+  display: flex;
+  gap: 1rem;
+}
+
+.backButton {
+  flex: 1;
+  padding: 0.75rem;
+  background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e0 100%);
+  color: var(--ifm-color-emphasis-800);
+  border: 2px solid transparent;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.backButton:hover {
+  background: linear-gradient(135deg, #cbd5e0 0%, #a0aec0 100%);
+  border-color: #667eea;
+  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.2);
+  transform: translateY(-1px);
+}
+
+.buttonGroup .submitButton {
+  flex: 2;
+}

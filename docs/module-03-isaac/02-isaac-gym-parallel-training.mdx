@@ -1,0 +1,391 @@
+---
+title: 'Parallel RL Training'
+description: 'Massive-scale reinforcement learning with GPU parallelization'
+---
+
+# Parallel RL Training
+
+## Introduction to Isaac Gym
+
+Isaac Gym is NVIDIA's physics simulation library designed for massively parallel reinforcement learning. Unlike traditional simulators that run one environment at a time on CPU, Isaac Gym simultaneously simulates thousands of environments on GPU, achieving 100-1000x training speedups.
+
+## Why Parallel Simulation?
+
+Modern RL algorithms like PPO require millions of timesteps to learn complex humanoid behaviors. Training a single environment at real-time (1x) would take:
+
+- **Walking**: ~10 hours for basic gait
+- **Manipulation**: ~50 hours for object grasping
+- **Dexterous tasks**: ~200+ hours
+
+With 4096 parallel environments at 100x speed, these times reduce to:
+- Walking: ~1 minute
+- Manipulation: ~7 minutes
+- Dexterous tasks: ~30 minutes
+
+## Architecture: Tensor-Based Physics
+
+Isaac Gym represents all simulation state as PyTorch tensors on GPU:
+
+```python
+# Traditional approach (CPU, one env)
+for env in environments:
+    env.step(action)
+    obs = env.get_obs()
+
+# Isaac Gym approach (GPU, 4096 envs)
+obs, reward, done, info = envs.step(actions_tensor)  # Shape: (4096, action_dim)
+# All environments step in parallel on GPU!
+```
+
+This enables:
+- **Zero CPU-GPU transfers**: Physics and policy evaluation on same device
+- **Batched operations**: Matrix multiplications instead of loops
+- **Memory efficiency**: Shared meshes across environments
+
+## Installation
+
+Install Isaac Gym Preview 4:
+
+```bash
+# Download from NVIDIA (requires free account)
+# https://developer.nvidia.com/isaac-gym
+
+# Extract and install
+cd isaacgym
+pip install -e python
+```
+
+Verify installation:
+
+```python
+from isaacgym import gymapi
+
+gym = gymapi.acquire_gym()
+print(f"Isaac Gym initialized: {gym}")
+```
+
+## Your First Parallel Environment
+
+Let's create 1024 parallel cartpole environments:
+
+```python
+from isaacgym import gymapi
+import torch
+import numpy as np
+
+# Create gym instance
+gym = gymapi.acquire_gym()
+
+# Simulation parameters
+sim_params = gymapi.SimParams()
+sim_params.substeps = 2
+sim_params.dt = 1.0 / 60.0
+sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.81)
+
+# GPU simulation
+sim_params.use_gpu_pipeline = True
+sim_params.physx.use_gpu = True
+
+# Create sim
+sim = gym.create_sim(0, 0, gymapi.SIM_PHYSX, sim_params)
+
+# Load cartpole asset
+asset_root = "assets"
+asset_file = "urdf/cartpole.urdf"
+asset = gym.load_asset(sim, asset_root, asset_file)
+
+# Create 1024 environments in grid
+num_envs = 1024
+envs_per_row = 32
+env_spacing = 2.0
+
+envs = []
+actor_handles = []
+
+for i in range(num_envs):
+    # Create environment
+    env = gym.create_env(
+        sim,
+        gymapi.Vec3(-env_spacing, -env_spacing, 0.0),
+        gymapi.Vec3(env_spacing, env_spacing, env_spacing),
+        envs_per_row
+    )
+    envs.append(env)
+
+    # Add cartpole actor
+    pose = gymapi.Transform()
+    pose.p = gymapi.Vec3(0.0, 0.0, 1.0)
+    actor_handle = gym.create_actor(env, asset, pose, "cartpole", i, 1)
+    actor_handles.append(actor_handle)
+
+# Prepare for simulation
+gym.prepare_sim(sim)
+
+# Create viewer (optional)
+viewer = gym.create_viewer(sim, gymapi.CameraProperties())
+
+# Simulation loop
+while not gym.query_viewer_has_closed(viewer):
+    # Step all environments in parallel
+    gym.simulate(sim)
+    gym.fetch_results(sim, True)
+
+    # Render
+    gym.step_graphics(sim)
+    gym.draw_viewer(viewer, sim, True)
+    gym.sync_frame_time(sim)
+
+gym.destroy_viewer(viewer)
+gym.destroy_sim(sim)
+```
+
+## Humanoid Locomotion with Isaac Gym
+
+Training a humanoid to walk:
+
+```python
+import torch
+from isaacgym import gymapi, gymtorch
+
+class HumanoidEnv:
+    def __init__(self, num_envs=4096):
+        self.num_envs = num_envs
+        self.device = 'cuda:0'
+
+        # Initialize gym
+        self.gym = gymapi.acquire_gym()
+        self.sim = self._create_sim()
+
+        # Load humanoid asset
+        asset_root = "assets"
+        asset_file = "mjcf/humanoid.xml"
+        self.humanoid_asset = self.gym.load_asset(
+            self.sim, asset_root, asset_file
+        )
+
+        # Create environments
+        self.envs = []
+        self.humanoid_handles = []
+        self._create_envs()
+
+        # Get DOF (Degrees of Freedom) properties
+        self.num_dof = self.gym.get_asset_dof_count(self.humanoid_asset)
+
+        # Prepare tensors
+        self.gym.prepare_sim(self.sim)
+        self._init_tensors()
+
+    def _create_sim(self):
+        sim_params = gymapi.SimParams()
+        sim_params.dt = 1.0 / 60.0
+        sim_params.substeps = 2
+        sim_params.up_axis = gymapi.UP_AXIS_Z
+        sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.81)
+
+        sim_params.physx.use_gpu = True
+        sim_params.use_gpu_pipeline = True
+        sim_params.physx.num_position_iterations = 4
+        sim_params.physx.num_velocity_iterations = 1
+
+        return self.gym.create_sim(0, 0, gymapi.SIM_PHYSX, sim_params)
+
+    def _create_envs(self):
+        env_spacing = 5.0
+        envs_per_row = int(np.sqrt(self.num_envs))
+
+        for i in range(self.num_envs):
+            env = self.gym.create_env(
+                self.sim,
+                gymapi.Vec3(-env_spacing, -env_spacing, 0.0),
+                gymapi.Vec3(env_spacing, env_spacing, env_spacing),
+                envs_per_row
+            )
+            self.envs.append(env)
+
+            pose = gymapi.Transform()
+            pose.p = gymapi.Vec3(0, 0, 1.34)  # Standing height
+            pose.r = gymapi.Quat(0, 0, 0, 1)
+
+            humanoid_handle = self.gym.create_actor(
+                env, self.humanoid_asset, pose, "humanoid", i, 1, 0
+            )
+            self.humanoid_handles.append(humanoid_handle)
+
+    def _init_tensors(self):
+        # Get physics state tensors
+        actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
+        dof_state_tensor = self.gym.acquire_dof_state_tensor(self.sim)
+
+        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_dof_state_tensor(self.sim)
+
+        # Wrap as PyTorch tensors
+        self.root_states = gymtorch.wrap_tensor(actor_root_state)
+        self.dof_states = gymtorch.wrap_tensor(dof_state_tensor)
+
+        # Shape: (num_envs, 13) - pos(3), rot(4), lin_vel(3), ang_vel(3)
+        self.root_positions = self.root_states[:, 0:3]
+        self.root_orientations = self.root_states[:, 3:7]
+        self.root_velocities = self.root_states[:, 7:13]
+
+        # Shape: (num_envs, num_dof, 2) - position, velocity
+        self.dof_positions = self.dof_states.view(self.num_envs, self.num_dof, 2)[..., 0]
+        self.dof_velocities = self.dof_states.view(self.num_envs, self.num_dof, 2)[..., 1]
+
+    def step(self, actions):
+        # Apply actions to DOFs
+        forces = actions * self.max_effort
+        self.gym.set_dof_actuation_force_tensor(
+            self.sim, gymtorch.unwrap_tensor(forces)
+        )
+
+        # Step physics
+        self.gym.simulate(self.sim)
+        self.gym.fetch_results(self.sim, True)
+
+        # Update tensors
+        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_dof_state_tensor(self.sim)
+
+        # Compute reward
+        reward = self._compute_reward()
+
+        # Check for episode termination
+        done = self._check_termination()
+
+        # Get observations
+        obs = self._get_obs()
+
+        return obs, reward, done, {}
+
+    def _compute_reward(self):
+        # Reward for forward velocity
+        forward_velocity = self.root_velocities[:, 0]
+
+        # Penalty for falling
+        height = self.root_positions[:, 2]
+        upright_penalty = torch.where(
+            height < 0.8,
+            torch.ones_like(height) * -10.0,
+            torch.zeros_like(height)
+        )
+
+        # Penalty for energy
+        energy_penalty = -0.01 * torch.sum(torch.abs(self.dof_velocities), dim=1)
+
+        reward = forward_velocity + upright_penalty + energy_penalty
+        return reward
+
+    def _check_termination(self):
+        # Terminate if robot falls
+        height = self.root_positions[:, 2]
+        done = height < 0.5
+        return done
+
+    def _get_obs(self):
+        # Concatenate all observations
+        obs = torch.cat([
+            self.root_positions,
+            self.root_orientations,
+            self.root_velocities,
+            self.dof_positions,
+            self.dof_velocities
+        ], dim=-1)
+        return obs
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+
+        # Reset root state
+        self.root_states[env_ids, 0:3] = torch.tensor([0, 0, 1.34], device=self.device)
+        self.root_states[env_ids, 3:7] = torch.tensor([0, 0, 0, 1], device=self.device)
+        self.root_states[env_ids, 7:13] = 0
+
+        # Reset DOF state
+        self.dof_states[env_ids] = 0
+
+        # Apply to simulation
+        env_ids_int32 = env_ids.to(dtype=torch.int32)
+        self.gym.set_actor_root_state_tensor_indexed(
+            self.sim,
+            gymtorch.unwrap_tensor(self.root_states),
+            gymtorch.unwrap_tensor(env_ids_int32),
+            len(env_ids_int32)
+        )
+
+        return self._get_obs()
+```
+
+## Integration with RL Libraries
+
+Use with Stable-Baselines3:
+
+```python
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
+
+# Wrap Isaac Gym env
+env = HumanoidEnv(num_envs=4096)
+
+# Train PPO
+model = PPO(
+    "MlpPolicy",
+    env,
+    n_steps=2048,
+    batch_size=4096,
+    n_epochs=10,
+    learning_rate=3e-4,
+    device='cuda'
+)
+
+model.learn(total_timesteps=10_000_000)
+model.save("humanoid_walker")
+```
+
+## Domain Randomization
+
+Improve sim-to-real transfer:
+
+```python
+def randomize_physics(self):
+    # Randomize masses
+    mass_scale = torch.rand(self.num_envs, device=self.device) * 0.4 + 0.8  # [0.8, 1.2]
+
+    # Randomize friction
+    friction = torch.rand(self.num_envs, device=self.device) * 0.6 + 0.4  # [0.4, 1.0]
+
+    # Randomize motor strength
+    motor_scale = torch.rand(self.num_envs, device=self.device) * 0.3 + 0.85  # [0.85, 1.15]
+
+    # Apply randomizations
+    for i, env in enumerate(self.envs):
+        self.gym.set_actor_scale(env, self.humanoid_handles[i], mass_scale[i].item())
+```
+
+## Performance Benchmarks
+
+| Environments | FPS (RTX 4090) | FPS (A100) | Speedup vs Real-Time |
+|--------------|----------------|------------|---------------------|
+| 1024 | 45,000 | 78,000 | 750x |
+| 4096 | 120,000 | 220,000 | 2000x |
+| 16384 | 180,000 | 380,000 | 3000x |
+
+## Key Takeaways
+
+- Isaac Gym parallelizes thousands of environments on single GPU
+- Tensor-based physics enables zero-copy operations
+- 100-1000x faster than traditional CPU simulation
+- Direct integration with PyTorch for end-to-end GPU training
+- Domain randomization improves sim-to-real transfer
+
+## References
+
+- [Isaac Gym Paper](https://arxiv.org/abs/2108.10470)
+- [Isaac Gym Documentation](https://developer.nvidia.com/isaac-gym)
+- [IsaacGymEnvs](https://github.com/NVIDIA-Omniverse/IsaacGymEnvs)
+- [rl-games](https://github.com/Denys88/rl_games)
+
+## Next Steps
+
+We'll explore synthetic data generation for vision-based policies and deploying trained models with Isaac ROS.

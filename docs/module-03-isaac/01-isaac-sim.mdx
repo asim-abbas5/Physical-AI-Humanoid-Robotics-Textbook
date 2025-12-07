@@ -1,0 +1,161 @@
+---
+title: 'Platform Fundamentals'
+description: 'Introduction to NVIDIA Isaac Sim for photorealistic robot simulation'
+---
+
+# Platform Fundamentals
+
+## What is Isaac Sim?
+
+Isaac Sim is NVIDIA's robotics simulation platform built on Omniverse, combining GPU-accelerated physics (PhysX 5), photorealistic rendering (RTX ray tracing), and AI-powered tools. Unlike traditional CPU-based simulators, Isaac Sim leverages CUDA to run thousands of parallel environments simultaneously - essential for modern reinforcement learning workflows.
+
+## Key Advantages
+
+**GPU Acceleration**: Train policies 100-1000x faster than real-time by parallelizing physics and rendering across thousands of environments.
+
+**Photorealistic Vision**: RTX ray tracing generates physically accurate camera images with realistic lighting, shadows, and reflections. Vision-based policies trained in Isaac Sim transfer to real robots with minimal domain gap.
+
+**Synthetic Data Generation**: Create unlimited labeled datasets for perception models. Domain randomization over lighting, textures, and geometry produces models robust to real-world variation.
+
+**Digital Twin Fidelity**: Import CAD models directly from SolidWorks, Fusion 360, or Blender. Accurate physics simulation validates designs before manufacturing.
+
+## System Requirements
+
+Isaac Sim demands significant GPU resources:
+
+**Minimum**:
+- RTX 2080 Ti (11GB VRAM)
+- 32GB system RAM
+- Ubuntu 20.04/22.04 or Windows 10/11
+
+**Recommended**:
+- RTX 4090 (24GB VRAM) or A6000
+- 64GB system RAM
+- NVMe SSD for asset streaming
+
+## Installation
+
+Using pip (Python 3.10):
+
+```bash
+# Create isolated environment
+conda create -n isaac-sim python=3.10
+conda activate isaac-sim
+
+# Install Isaac Sim
+pip install isaacsim==2023.1.1 --extra-index-url https://pypi.nvidia.com
+```
+
+Verify installation:
+
+```python
+from isaacsim import SimulationApp
+
+simulation_app = SimulationApp({"headless": False})
+from omni.isaac.core import World
+
+world = World()
+world.scene.add_default_ground_plane()
+print("Isaac Sim initialized successfully!")
+
+simulation_app.close()
+```
+
+## Your First Isaac Sim Scene
+
+Let's create a simple scene with a robotic arm:
+
+```python
+from isaacsim import SimulationApp
+
+# Launch Isaac Sim
+simulation_app = SimulationApp({"headless": False})
+
+from omni.isaac.core import World
+from omni.isaac.core.robots import Robot
+from omni.isaac.core.utils.stage import add_reference_to_stage
+import numpy as np
+
+# Create world
+world = World(stage_units_in_meters=1.0)
+world.scene.add_default_ground_plane()
+
+# Add Franka Panda robot
+add_reference_to_stage(
+    usd_path="/Isaac/Robots/Franka/franka_alt_fingers.usd",
+    prim_path="/World/Franka"
+)
+
+# Create robot controller
+robot = world.scene.add(Robot(prim_path="/World/Franka", name="franka"))
+
+# Reset world to initialize physics
+world.reset()
+
+# Simulation loop
+for i in range(1000):
+    # Step physics (60 Hz)
+    world.step(render=True)
+
+    if i % 60 == 0:
+        # Print robot joint positions every second
+        joint_positions = robot.get_joint_positions()
+        print(f"Step {i}: Joint positions = {joint_positions}")
+
+simulation_app.close()
+```
+
+## Understanding USD
+
+Isaac Sim uses USD (Universal Scene Description) as its native format. USD is Pixar's open-source framework for describing 3D scenes with:
+
+- **Hierarchical Structure**: Prims (primitives) organized in tree
+- **Composition**: Layer, reference, and inherit scene elements
+- **Time-Varying Data**: Animate properties across timeline
+- **Rich Metadata**: Store custom attributes and physics parameters
+
+Convert URDF to USD:
+
+```python
+from omni.isaac.urdf import _urdf
+
+# Convert ROS URDF to Isaac USD
+urdf_path = "/path/to/robot.urdf"
+usd_path = "/path/to/robot.usd"
+
+_urdf.acquire_urdf_interface().import_urdf(
+    urdf_path=urdf_path,
+    import_config=_urdf.ImportConfig(),
+    dest_path=usd_path
+)
+```
+
+## Physics Configuration
+
+Configure PhysX for accurate humanoid simulation:
+
+```python
+from omni.isaac.core.utils.physics import simulate_async
+
+# Set physics parameters
+world.get_physics_context().set_gravity(value=-9.81)  # Earth gravity
+world.get_physics_context().set_solver_type("TGS")    # Temporal Gauss-Seidel
+world.get_physics_context().enable_gpu_dynamics(True)  # GPU acceleration
+```
+
+## Performance Tips
+
+- **Reduce Visual Quality**: Disable ray tracing during training with `headless=True`
+- **Parallelize Environments**: Use `isaac.gym` for vectorized simulation
+- **Optimize Collision Meshes**: Use simplified collision geometry (convex hulls)
+- **Batch Rendering**: Render camera images every N steps, not every step
+
+## Next Steps
+
+In the following sections, we'll explore Isaac Gym for parallel RL training, synthetic data generation for perception, and deploying trained models with Isaac ROS.
+
+## References
+
+- [Isaac Sim Documentation](https://docs.omniverse.nvidia.com/isaacsim/latest/index.html)
+- [USD Documentation](https://openusd.org/release/index.html)
+- [PhysX 5 SDK](https://nvidia-omniverse.github.io/PhysX/physx/5.1.3/index.html)

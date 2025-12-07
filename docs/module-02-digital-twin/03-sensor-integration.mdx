@@ -1,0 +1,430 @@
+---
+title: 'Sensor Integration'
+description: 'Adding cameras, IMUs, and lidars to simulated robots'
+---
+
+# Sensor Integration
+
+## Overview
+
+Sensor simulation is critical for training perception-based policies and validating algorithms before hardware deployment. Gazebo provides photorealistic camera rendering, accurate IMU models, and ray-traced lidar simulation. This section covers integrating common sensors into your humanoid robot.
+
+## Camera Sensors
+
+Cameras are the primary perception modality for vision-language-action models. Gazebo supports RGB cameras, depth cameras, and stereo pairs.
+
+### RGB Camera Plugin
+
+Add a head-mounted camera to your URDF:
+
+```xml
+<!-- Camera link -->
+<link name="camera_link">
+  <visual>
+    <geometry>
+      <box size="0.02 0.08 0.02"/>
+    </geometry>
+    <material name="black">
+      <color rgba="0.0 0.0 0.0 1.0"/>
+    </material>
+  </visual>
+  <collision>
+    <geometry>
+      <box size="0.02 0.08 0.02"/>
+    </geometry>
+  </collision>
+  <inertial>
+    <mass value="0.05"/>
+    <inertia ixx="0.0001" ixy="0.0" ixz="0.0"
+             iyy="0.0001" iyz="0.0" izz="0.0001"/>
+  </inertial>
+</link>
+
+<!-- Attach camera to head -->
+<joint name="camera_joint" type="fixed">
+  <parent link="head_link"/>
+  <child link="camera_link"/>
+  <origin xyz="0.05 0 0.1" rpy="0 0 0"/>
+</joint>
+
+<!-- Gazebo camera sensor -->
+<gazebo reference="camera_link">
+  <sensor name="head_camera" type="camera">
+    <update_rate>30.0</update_rate>
+    <camera name="head">
+      <horizontal_fov>1.3962634</horizontal_fov>  <!-- 80 degrees -->
+      <image>
+        <width>640</width>
+        <height>480</height>
+        <format>RGB_INT8</format>
+      </image>
+      <clip>
+        <near>0.02</near>
+        <far>10.0</far>
+      </clip>
+      <noise>
+        <type>gaussian</type>
+        <mean>0.0</mean>
+        <stddev>0.007</stddev>
+      </noise>
+    </camera>
+
+    <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+      <ros>
+        <namespace>/robot</namespace>
+        <remapping>image_raw:=camera/image_raw</remapping>
+        <remapping>camera_info:=camera/camera_info</remapping>
+      </ros>
+      <camera_name>head_camera</camera_name>
+      <frame_name>camera_link</frame_name>
+      <hack_baseline>0.07</hack_baseline>
+    </plugin>
+  </sensor>
+</gazebo>
+```
+
+### Depth Camera (RGB-D)
+
+For perception tasks requiring distance information:
+
+```xml
+<gazebo reference="rgbd_camera_link">
+  <sensor name="rgbd_camera" type="depth">
+    <update_rate>10.0</update_rate>
+    <camera>
+      <horizontal_fov>1.047198</horizontal_fov>  <!-- 60 degrees -->
+      <image>
+        <width>640</width>
+        <height>480</height>
+        <format>R8G8B8</format>
+      </image>
+      <clip>
+        <near>0.1</near>
+        <far>5.0</far>
+      </clip>
+    </camera>
+
+    <plugin name="depth_camera_controller" filename="libgazebo_ros_camera.so">
+      <ros>
+        <namespace>/robot</namespace>
+      </ros>
+      <camera_name>rgbd</camera_name>
+      <frame_name>rgbd_camera_link</frame_name>
+      <min_depth>0.1</min_depth>
+      <max_depth>5.0</max_depth>
+    </plugin>
+  </sensor>
+</gazebo>
+```
+
+Subscribe to depth images:
+
+```python
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import cv2
+import numpy as np
+
+class DepthImageProcessor(Node):
+    def __init__(self):
+        super().__init__('depth_processor')
+        self.bridge = CvBridge()
+        self.subscription = self.create_subscription(
+            Image,
+            '/robot/rgbd/depth/image_raw',
+            self.depth_callback,
+            10
+        )
+
+    def depth_callback(self, msg):
+        # Convert ROS Image to numpy array
+        depth_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='32FC1')
+
+        # Process depth (e.g., find nearest obstacle)
+        min_distance = np.min(depth_image[depth_image > 0])
+        self.get_logger().info(f'Nearest obstacle: {min_distance:.2f}m')
+
+        # Visualize
+        depth_colormap = cv2.applyColorMap(
+            cv2.convertScaleAbs(depth_image, alpha=50),
+            cv2.COLORMAP_JET
+        )
+        cv2.imshow('Depth Camera', depth_colormap)
+        cv2.waitKey(1)
+
+def main():
+    rclpy.init()
+    node = DepthImageProcessor()
+    rclpy.spin(node)
+```
+
+## IMU Sensors
+
+Inertial Measurement Units provide acceleration and angular velocity critical for balance control.
+
+### IMU Plugin
+
+```xml
+<link name="imu_link">
+  <inertial>
+    <mass value="0.01"/>
+    <inertia ixx="0.00001" ixy="0.0" ixz="0.0"
+             iyy="0.00001" iyz="0.0" izz="0.00001"/>
+  </inertial>
+</link>
+
+<joint name="imu_joint" type="fixed">
+  <parent link="torso"/>
+  <child link="imu_link"/>
+  <origin xyz="0 0 0" rpy="0 0 0"/>
+</joint>
+
+<gazebo reference="imu_link">
+  <sensor name="imu_sensor" type="imu">
+    <always_on>true</always_on>
+    <update_rate>100.0</update_rate>
+    <imu>
+      <angular_velocity>
+        <x>
+          <noise type="gaussian">
+            <mean>0.0</mean>
+            <stddev>2e-4</stddev>
+          </noise>
+        </x>
+        <y>
+          <noise type="gaussian">
+            <mean>0.0</mean>
+            <stddev>2e-4</stddev>
+          </noise>
+        </y>
+        <z>
+          <noise type="gaussian">
+            <mean>0.0</mean>
+            <stddev>2e-4</stddev>
+          </noise>
+        </z>
+      </angular_velocity>
+      <linear_acceleration>
+        <x>
+          <noise type="gaussian">
+            <mean>0.0</mean>
+            <stddev>1.7e-2</stddev>
+          </noise>
+        </x>
+        <y>
+          <noise type="gaussian">
+            <mean>0.0</mean>
+            <stddev>1.7e-2</stddev>
+          </noise>
+        </y>
+        <z>
+          <noise type="gaussian">
+            <mean>0.0</mean>
+            <stddev>1.7e-2</stddev>
+          </noise>
+        </z>
+      </linear_acceleration>
+    </imu>
+
+    <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+      <ros>
+        <namespace>/robot</namespace>
+        <remapping>~/out:=imu/data</remapping>
+      </ros>
+      <frame_name>imu_link</frame_name>
+    </plugin>
+  </sensor>
+</gazebo>
+```
+
+Process IMU data:
+
+```python
+from sensor_msgs.msg import Imu
+
+class IMUMonitor(Node):
+    def __init__(self):
+        super().__init__('imu_monitor')
+        self.subscription = self.create_subscription(
+            Imu,
+            '/robot/imu/data',
+            self.imu_callback,
+            10
+        )
+
+    def imu_callback(self, msg):
+        # Extract orientation (quaternion)
+        orientation = msg.orientation
+
+        # Extract angular velocity
+        angular_vel = msg.angular_velocity
+        self.get_logger().info(
+            f'Angular velocity: x={angular_vel.x:.3f}, '
+            f'y={angular_vel.y:.3f}, z={angular_vel.z:.3f}'
+        )
+
+        # Extract linear acceleration
+        accel = msg.linear_acceleration
+        # Useful for detecting falls
+        if abs(accel.z) < 5.0:  # Less than ~0.5g vertical
+            self.get_logger().warn('Robot may be falling!')
+```
+
+## Lidar/Laser Scanners
+
+For navigation and obstacle avoidance:
+
+```xml
+<gazebo reference="laser_link">
+  <sensor name="laser_scanner" type="ray">
+    <always_on>true</always_on>
+    <update_rate>10.0</update_rate>
+    <ray>
+      <scan>
+        <horizontal>
+          <samples>360</samples>
+          <resolution>1.0</resolution>
+          <min_angle>-3.14159</min_angle>
+          <max_angle>3.14159</max_angle>
+        </horizontal>
+      </scan>
+      <range>
+        <min>0.1</min>
+        <max>10.0</max>
+        <resolution>0.01</resolution>
+      </range>
+      <noise>
+        <type>gaussian</type>
+        <mean>0.0</mean>
+        <stddev>0.01</stddev>
+      </noise>
+    </ray>
+
+    <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
+      <ros>
+        <namespace>/robot</namespace>
+        <remapping>~/out:=scan</remapping>
+      </ros>
+      <output_type>sensor_msgs/LaserScan</output_type>
+      <frame_name>laser_link</frame_name>
+    </plugin>
+  </sensor>
+</gazebo>
+```
+
+## Force-Torque Sensors
+
+Measure contact forces at feet or hands:
+
+```xml
+<gazebo>
+  <plugin name="ft_sensor_plugin" filename="libgazebo_ros_ft_sensor.so">
+    <ros>
+      <namespace>/robot</namespace>
+      <remapping>~/out:=left_foot/force_torque</remapping>
+    </ros>
+    <update_rate>100.0</update_rate>
+    <joint_name>left_ankle_pitch</joint_name>
+    <frame_name>left_foot_link</frame_name>
+    <measure_direction>child_to_parent</measure_direction>
+  </plugin>
+</gazebo>
+```
+
+Use for balance control:
+
+```python
+from geometry_msgs.msg import WrenchStamped
+
+class BalanceController(Node):
+    def __init__(self):
+        super().__init__('balance_controller')
+        self.subscription = self.create_subscription(
+            WrenchStamped,
+            '/robot/left_foot/force_torque',
+            self.ft_callback,
+            10
+        )
+
+    def ft_callback(self, msg):
+        force_z = msg.wrench.force.z
+
+        if force_z > 100.0:  # Threshold in Newtons
+            self.get_logger().info(f'Foot contact detected: {force_z:.1f}N')
+        else:
+            self.get_logger().warn('Foot not in contact with ground!')
+```
+
+## Multi-Sensor Fusion
+
+Combine camera, IMU, and lidar for robust perception:
+
+```python
+from message_filters import ApproximateTimeSynchronizer, Subscriber
+
+class SensorFusion(Node):
+    def __init__(self):
+        super().__init__('sensor_fusion')
+
+        # Subscribe to multiple sensors
+        image_sub = Subscriber(self, Image, '/robot/camera/image_raw')
+        imu_sub = Subscriber(self, Imu, '/robot/imu/data')
+        scan_sub = Subscriber(self, LaserScan, '/robot/scan')
+
+        # Synchronize messages by timestamp
+        ts = ApproximateTimeSynchronizer(
+            [image_sub, imu_sub, scan_sub],
+            queue_size=10,
+            slop=0.1  # 100ms tolerance
+        )
+        ts.registerCallback(self.fusion_callback)
+
+    def fusion_callback(self, image_msg, imu_msg, scan_msg):
+        self.get_logger().info('Synchronized sensor data received')
+        # Process combined sensor data for SLAM, navigation, etc.
+```
+
+## Sensor Noise and Calibration
+
+Realistic sensor noise improves sim-to-real transfer:
+
+```xml
+<!-- Add realistic camera noise -->
+<noise>
+  <type>gaussian</type>
+  <mean>0.0</mean>
+  <stddev>0.007</stddev>  <!-- ~2 grayscale levels at 8-bit depth -->
+</noise>
+
+<!-- Add motion blur -->
+<distortion>
+  <k1>-0.1</k1>  <!-- Radial distortion -->
+  <k2>0.01</k2>
+  <k3>0.0</k3>
+  <p1>0.001</p1>  <!-- Tangential distortion -->
+  <p2>0.001</p2>
+  <center>0.5 0.5</center>
+</distortion>
+```
+
+## Key Takeaways
+
+- Cameras provide visual perception for VLA models
+- IMUs enable orientation estimation and fall detection
+- Lidar supports navigation and obstacle avoidance
+- Force-torque sensors measure contact forces for balance
+- Sensor noise and calibration improve sim-to-real transfer
+- Message synchronization enables multi-sensor fusion
+
+## References
+
+- [Gazebo ROS 2 Sensors](https://gazebosim.org/api/gazebo/7/tutorials.html)
+- [gazebo_ros_pkgs Sensors](https://github.com/ros-simulation/gazebo_ros_pkgs/tree/ros2/gazebo_plugins)
+- [sensor_msgs ROS 2](https://docs.ros.org/en/humble/p/sensor_msgs/interfaces.html)
+- [message_filters](https://docs.ros.org/en/humble/p/message_filters/index.html)
+
+## Next Steps
+
+With sensors integrated, we'll explore NVIDIA Isaac Sim for GPU-accelerated simulation and synthetic data generation at scale.

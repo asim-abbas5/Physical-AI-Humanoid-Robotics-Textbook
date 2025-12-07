@@ -1,0 +1,13 @@
+.footerAuthSection {
+  background-color: var(--ifm-footer-background-color);
+  padding: 2rem 0 1rem;
+  border-top: 1px solid var(--ifm-footer-link-color);
+}
+
+.authContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  max-width: 300px;
+  margin: 0 auto;
+}

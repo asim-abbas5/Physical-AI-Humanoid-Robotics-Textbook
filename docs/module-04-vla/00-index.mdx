@@ -1,0 +1,36 @@
+---
+title: 'Vision-Language-Action Models (VLA)'
+description: 'Learn how VLA models enable natural language control of robots'
+---
+
+# Vision-Language-Action Models (VLA)
+
+## Introduction
+
+Vision-Language-Action (VLA) models represent a paradigm shift in human-robot interaction. By combining computer vision, natural language understanding, and robotic control in a single end-to-end model, VLAs enable robots to understand commands like "pick up the red mug" and execute them in complex, unstructured environments. This module explores the architecture, training, and deployment of VLA models for humanoid robotics.
+
+## The VLA Revolution
+
+Traditional robots required explicit programming for each task. VLA models instead learn from diverse datasets of human demonstrations, discovering generalizable policies that work across objects, environments, and tasks. A single VLA model can manipulate thousands of object types it has never seen during training.
+
+Recent breakthroughs like RT-2, OpenVLA, and ACT (Action Chunking Transformer) have demonstrated that large-scale pretraining on internet data dramatically improves robotic manipulation. These models leverage vision transformers pretrained on billions of images, then fine-tune on robotic demonstration datasets to ground language understanding in physical action.
+
+## What You'll Learn
+
+You'll start by understanding VLA architecture - how vision encoders process camera observations, language models interpret commands, and action decoders generate motor commands. We'll examine key datasets like Open X-Embodiment that enable cross-robot policy learning.
+
+You'll then implement a complete VLA pipeline: collecting demonstrations using teleoperation, training a vision-language-action model, and deploying it to a simulated humanoid robot. We'll explore techniques like action chunking and diffusion policies that improve temporal consistency and reduce compounding errors.
+
+Finally, you'll learn about multi-modal perception - integrating tactile feedback, audio, and proprioception to enhance manipulation capabilities beyond vision alone.
+
+## Learning Outcomes
+
+By the end of this module, you will:
+
+- Understand VLA model architecture and training procedures
+- Collect robotic demonstration data using teleoperation
+- Train end-to-end VLA policies from visual observations
+- Deploy VLA models with real-time inference constraints
+- Integrate speech recognition for voice-controlled robots
+
+Ready to build robots that understand natural language? Let's get started!

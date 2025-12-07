@@ -1,0 +1,130 @@
+---
+title: 'Simulation Basics'
+description: 'Getting started with Gazebo Harmonic for robot simulation'
+---
+
+# Simulation Basics
+
+## Introduction to Gazebo Harmonic
+
+Gazebo Harmonic is the latest generation of the industry-standard robot simulator, offering a complete rewrite with improved performance, better physics accuracy, and a modern plugin architecture. Unlike its predecessor Gazebo Classic, Harmonic uses Ignition libraries with a microservices approach, enabling distributed simulation and better scalability.
+
+## Why Gazebo for Humanoid Robotics?
+
+Humanoid robots present unique simulation challenges:
+- **Complex Kinematics**: 20+ degrees of freedom requiring accurate joint modeling
+- **Contact Dynamics**: Foot-ground interaction critical for balance and walking
+- **Sensor Integration**: Multiple cameras, IMUs, and force/torque sensors
+- **Real-Time Constraints**: Physics must run at or faster than real-time for RL training
+
+Gazebo Harmonic addresses these with DART (Dynamic Animation and Robotics Toolkit) physics engine, supporting advanced features like soft contacts, friction pyramids, and parallel collision detection.
+
+## Installing Gazebo Harmonic
+
+On Ubuntu 22.04:
+
+```bash
+sudo apt-get update
+sudo apt-get install lsb-release wget gnupg
+
+# Add Gazebo repository
+sudo wget https://packages.osrfoundation.org/gazebo.gpg -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
+
+# Install Gazebo Harmonic
+sudo apt-get update
+sudo apt-get install gz-harmonic
+```
+
+Verify installation:
+
+```bash
+gz sim --version
+# Should output: Gazebo Sim, version 8.x.x
+```
+
+## Your First Gazebo World
+
+Let's create a simple world file with a ground plane and lighting:
+
+```xml
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="humanoid_training">
+    <!-- Physics -->
+    <physics name="dart_physics" type="dart">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <!-- Lighting -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- Ground plane -->
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.8 0.8 0.8 1</ambient>
+          </material>
+        </visual>
+      </link>
+    </model>
+  </world>
+</sdf>
+```
+
+Save as `humanoid_world.sdf` and launch:
+
+```bash
+gz sim humanoid_world.sdf
+```
+
+## Understanding SDF Format
+
+SDF (Simulation Description Format) is Gazebo's XML-based language for describing robots, environments, and sensors. Key elements:
+
+- **`<world>`**: Top-level container for simulation
+- **`<model>`**: A physical entity (robot, object, building)
+- **`<link>`**: Rigid body with inertia, collision, and visual properties
+- **`<joint>`**: Connects two links with kinematic constraints
+- **`<sensor>`**: Perceives the environment (camera, lidar, IMU)
+
+## Gazebo GUI Basics
+
+The Gazebo interface provides:
+- **3D Scene**: Visualize simulation in real-time
+- **Entity Tree**: Hierarchical view of world contents
+- **Component Inspector**: View/edit entity properties
+- **Play/Pause Controls**: Control simulation time
+- **Transform Tools**: Move, rotate, scale entities interactively
+
+## Next Steps
+
+Now that you understand Gazebo basics, we'll create a humanoid robot model in URDF and spawn it in this world. We'll then add sensors and configure physics properties for realistic walking simulation.
+
+## References
+
+- [Gazebo Harmonic Documentation](https://gazebosim.org/docs/harmonic)
+- [SDF Specification](http://sdformat.org/spec)
+- [DART Physics Engine](https://dartsim.github.io/)

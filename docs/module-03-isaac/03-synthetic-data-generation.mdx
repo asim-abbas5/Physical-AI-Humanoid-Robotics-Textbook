@@ -1,0 +1,412 @@
+---
+title: 'Synthetic Data Generation'
+description: 'Creating massive labeled datasets for perception at scale'
+---
+
+# Synthetic Data Generation
+
+## The Data Bottleneck
+
+Training modern vision models requires millions of labeled images. For robotics-specific tasks like grasping, object detection, or pose estimation, manually collecting and labeling this data is prohibitively expensive:
+
+- **Manual labeling**: $0.10-$1.00 per image
+- **1M images**: $100,000-$1,000,000
+- **Time**: Months of work
+
+Synthetic data generation solves this by automatically creating photorealistic labeled images at scale using Isaac Sim.
+
+## Why Synthetic Data Works
+
+Recent advances in physically-based rendering (PBR) and domain randomization have closed the sim-to-real gap:
+
+- **Photorealistic RTX rendering**: Matches real camera characteristics
+- **Perfect labels**: Automatic 2D/3D bboxes, segmentation, depth, normals
+- **Infinite diversity**: Randomize lighting, textures, poses, backgrounds
+- **Zero privacy concerns**: No real humans or proprietary spaces
+
+## Replicator: Isaac Sim's Data Generation API
+
+Replicator provides a Python API for orchestrating randomized scenes and capturing annotated images.
+
+### Basic Data Generation Pipeline
+
+```python
+import omni.replicator.core as rep
+from omni.isaac.core import World
+from omni.isaac.core.utils.stage import add_reference_to_stage
+
+# Initialize Isaac Sim
+world = World(stage_units_in_meters=1.0)
+
+# Create camera
+camera = rep.create.camera(position=(2, 2, 2), look_at=(0, 0, 0))
+
+# Render settings
+render_product = rep.create.render_product(camera, resolution=(1024, 1024))
+
+# Load objects
+table_usd = "/Isaac/Props/Mounts/SeattleLabTable/table_instanceable.usd"
+mug_usd = "/Isaac/Props/YCB/Axis_Aligned/025_mug.usd"
+
+def random_scene():
+    # Randomize table position
+    with rep.create.group():
+        table = rep.create.from_usd(table_usd)
+        with table:
+            rep.modify.pose(
+                position=rep.distribution.uniform((0, 0, 0), (0.2, 0.2, 0)),
+                rotation=rep.distribution.uniform((0, 0, -30), (0, 0, 30))
+            )
+
+    # Randomize mug
+    with rep.create.group():
+        mug = rep.create.from_usd(mug_usd)
+        with mug:
+            rep.modify.pose(
+                position=rep.distribution.uniform((-0.1, -0.1, 0.9), (0.1, 0.1, 1.1)),
+                rotation=rep.distribution.uniform((0, 0, 0), (360, 360, 360))
+            )
+            # Randomize appearance
+            rep.randomizer.color(
+                colors=rep.distribution.uniform((0, 0, 0), (1, 1, 1))
+            )
+
+    # Randomize lighting
+    light = rep.create.light(
+        light_type="Dome",
+        intensity=rep.distribution.uniform(500, 3000),
+        color=rep.distribution.uniform((0.8, 0.8, 0.8), (1.0, 1.0, 1.0))
+    )
+
+    return table.node, mug.node
+
+# Register randomizer
+rep.randomizer.register(random_scene)
+
+# Attach writers for annotations
+writer = rep.WriterRegistry.get("BasicWriter")
+writer.initialize(
+    output_dir="./synthetic_data",
+    rgb=True,
+    bounding_box_2d_tight=True,
+    semantic_segmentation=True,
+    distance_to_image_plane=True,
+    normals=True,
+)
+
+writer.attach([render_product])
+
+# Run data generation
+with rep.trigger.on_frame(num_frames=1000):
+    rep.randomizer.random_scene()
+
+# Execute
+rep.orchestrator.run()
+```
+
+## Domain Randomization Strategies
+
+### Lighting Randomization
+
+```python
+def randomize_lighting():
+    # Dome light (HDRI environment)
+    dome = rep.create.light(
+        light_type="Dome",
+        intensity=rep.distribution.log_uniform(300, 5000),
+        texture=rep.distribution.choice([
+            "indoor_hdri.hdr",
+            "outdoor_hdri.hdr",
+            "warehouse.hdr"
+        ])
+    )
+
+    # Point lights
+    num_lights = rep.distribution.choice([0, 1, 2, 3])
+    for i in range(num_lights):
+        rep.create.light(
+            light_type="Sphere",
+            intensity=rep.distribution.uniform(1000, 10000),
+            position=rep.distribution.uniform((-2, -2, 1), (2, 2, 3)),
+            color=rep.distribution.uniform((0.9, 0.9, 0.9), (1.0, 1.0, 1.0))
+        )
+```
+
+### Texture and Material Randomization
+
+```python
+def randomize_materials(obj):
+    # Randomize base color
+    rep.randomizer.color(
+        obj,
+        colors=rep.distribution.uniform((0.1, 0.1, 0.1), (0.9, 0.9, 0.9))
+    )
+
+    # Randomize roughness (0=mirror, 1=matte)
+    rep.randomizer.roughness(
+        obj,
+        roughness=rep.distribution.uniform(0.0, 1.0)
+    )
+
+    # Randomize metallic
+    rep.randomizer.metallic(
+        obj,
+        metallic=rep.distribution.choice([0.0, 1.0])
+    )
+
+    # Apply random texture
+    textures = [
+        "wood_texture.png",
+        "metal_texture.png",
+        "fabric_texture.png"
+    ]
+    rep.randomizer.texture(
+        obj,
+        texture=rep.distribution.choice(textures),
+        project_uvw=True
+    )
+```
+
+### Camera Randomization
+
+```python
+def randomize_camera(camera):
+    # Random viewpoint
+    radius = rep.distribution.uniform(1.5, 3.0)
+    theta = rep.distribution.uniform(0, 360)
+    phi = rep.distribution.uniform(20, 70)
+
+    # Spherical to Cartesian
+    x = radius * np.sin(np.radians(phi)) * np.cos(np.radians(theta))
+    y = radius * np.sin(np.radians(phi)) * np.sin(np.radians(theta))
+    z = radius * np.cos(np.radians(phi))
+
+    rep.modify.pose(
+        camera,
+        position=(x, y, z),
+        look_at=(0, 0, 0.5)
+    )
+
+    # Randomize intrinsics
+    rep.modify.attribute(
+        camera,
+        "focalLength",
+        rep.distribution.uniform(18, 50)  # mm
+    )
+
+    # Add motion blur
+    rep.modify.attribute(
+        camera,
+        "motionBlurIntensity",
+        rep.distribution.uniform(0.0, 0.3)
+    )
+```
+
+## Annotation Types
+
+### 2D Bounding Boxes
+
+```python
+writer = rep.WriterRegistry.get("BasicWriter")
+writer.initialize(
+    output_dir="./bbox_data",
+    rgb=True,
+    bounding_box_2d_tight=True,  # Tight bboxes
+    bounding_box_2d_loose=True,  # Loose bboxes
+)
+```
+
+Output format (JSON):
+```json
+{
+  "frame_000001.png": {
+    "bboxes": [
+      {
+        "class": "mug",
+        "x_min": 320,
+        "y_min": 240,
+        "x_max": 680,
+        "y_max": 760,
+        "occlusion": 0.1
+      }
+    ]
+  }
+}
+```
+
+### Semantic Segmentation
+
+```python
+writer.initialize(
+    semantic_segmentation=True,
+    colorize_semantic_segmentation=True
+)
+```
+
+Outputs per-pixel class labels as PNG masks.
+
+### Instance Segmentation
+
+```python
+writer.initialize(
+    instance_segmentation=True,
+    instance_id_segmentation=True
+)
+```
+
+Each object instance gets unique color/ID.
+
+### Depth and Normals
+
+```python
+writer.initialize(
+    distance_to_image_plane=True,  # Depth
+    distance_to_camera=True,  # Euclidean distance
+    normals=True,  # Surface normals
+)
+```
+
+### 3D Keypoints and Pose
+
+```python
+writer.initialize(
+    skeleton_data=True,  # 3D keypoints
+    object_pose=True  # 6-DOF pose (position + rotation)
+)
+```
+
+## Scaling Data Generation
+
+### Multi-Camera Setup
+
+```python
+# Create 4 cameras at different angles
+cameras = []
+positions = [(2, 0, 1), (0, 2, 1), (-2, 0, 1), (0, -2, 1)]
+
+for i, pos in enumerate(positions):
+    cam = rep.create.camera(position=pos, look_at=(0, 0, 0.5))
+    rp = rep.create.render_product(cam, resolution=(512, 512))
+    cameras.append(rp)
+
+# Attach same writer to all cameras
+writer.attach(cameras)
+```
+
+### Headless Batch Generation
+
+```python
+from isaacsim import SimulationApp
+
+# Launch headless for cluster deployment
+simulation_app = SimulationApp({"headless": True})
+
+# Run data generation
+rep.orchestrator.run()
+
+# Generate 100k images across 10 nodes = 10k per node
+simulation_app.close()
+```
+
+### Cloud Deployment
+
+```bash
+# Run on AWS with NVIDIA NGC containers
+docker run --gpus all -v $PWD:/workspace nvcr.io/nvidia/isaac-sim:2023.1.1 \
+  python generate_data.py --num_frames 100000 --output s3://my-bucket/data/
+```
+
+## Quality Validation
+
+Ensure synthetic data quality:
+
+```python
+def validate_sample(rgb_path, bbox_path):
+    # Load image and boxes
+    img = cv2.imread(rgb_path)
+    with open(bbox_path) as f:
+        boxes = json.load(f)
+
+    # Check for degenerate boxes
+    for box in boxes['bboxes']:
+        width = box['x_max'] - box['x_min']
+        height = box['y_max'] - box['y_min']
+
+        if width < 10 or height < 10:
+            print(f"Warning: tiny box in {rgb_path}")
+
+        if box['occlusion'] > 0.9:
+            print(f"Warning: heavily occluded in {rgb_path}")
+
+    # Visualize
+    for box in boxes['bboxes']:
+        cv2.rectangle(
+            img,
+            (box['x_min'], box['y_min']),
+            (box['x_max'], box['y_max']),
+            (0, 255, 0),
+            2
+        )
+    cv2.imshow('Validation', img)
+    cv2.waitKey(100)
+```
+
+## Training on Synthetic Data
+
+```python
+from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.config import get_cfg
+from detectron2 import model_zoo
+
+def register_synthetic_dataset(data_dir):
+    def load_data():
+        # Parse JSON annotations
+        samples = []
+        for frame_file in os.listdir(os.path.join(data_dir, "annotations")):
+            with open(os.path.join(data_dir, "annotations", frame_file)) as f:
+                ann = json.load(f)
+                samples.append({
+                    "file_name": os.path.join(data_dir, "rgb", ann['image']),
+                    "annotations": ann['bboxes']
+                })
+        return samples
+
+    DatasetCatalog.register("synthetic_mugs", load_data)
+    MetadataCatalog.get("synthetic_mugs").thing_classes = ["mug"]
+
+# Train Faster R-CNN
+cfg = get_cfg()
+cfg.merge_from_file(model_zoo.get_config_file("COCO-Detection/faster_rcnn_R_50_FPN_3x.yaml"))
+cfg.DATASETS.TRAIN = ("synthetic_mugs",)
+cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+
+trainer = DefaultTrainer(cfg)
+trainer.train()
+```
+
+## Sim-to-Real Transfer Tips
+
+1. **Match camera parameters**: Use real camera's FOV, resolution, distortion
+2. **Realistic lighting**: Sample from real HDRI environments
+3. **Background diversity**: Include cluttered, textured backgrounds
+4. **Occlusion**: Ensure objects partially occluded in 30-50% of samples
+5. **Fine-tune on real**: Use small real dataset for domain adaptation
+
+## Key Takeaways
+
+- Synthetic data generation eliminates manual labeling costs
+- Replicator API enables programmatic scene randomization
+- Domain randomization improves sim-to-real transfer
+- Automatic perfect annotations (bboxes, segmentation, depth, pose)
+- Scales to millions of images with headless cloud deployment
+
+## References
+
+- [Omniverse Replicator](https://docs.omniverse.nvidia.com/extensions/latest/ext_replicator.html)
+- [Domain Randomization Paper](https://arxiv.org/abs/1703.06907)
+- [Isaac Sim Synthetic Data](https://docs.omniverse.nvidia.com/isaacsim/latest/replicator_tutorials/index.html)
+- [NVIDIA TAO Toolkit](https://developer.nvidia.com/tao-toolkit)
+
+## Next Steps
+
+We'll integrate synthetic data with VLA models to train end-to-end vision-language-action policies for humanoid manipulation.

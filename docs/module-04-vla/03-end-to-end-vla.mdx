@@ -1,0 +1,486 @@
+---
+title: 'End-to-End Models'
+description: 'Building complete Vision-Language-Action systems for humanoid robots'
+---
+
+# End-to-End Models
+
+## The VLA Revolution
+
+Vision-Language-Action (VLA) models represent a paradigm shift in robotics. Instead of hand-coding separate modules for perception, planning, and control, VLA models learn end-to-end mappings from raw sensory input and language commands directly to low-level motor actions.
+
+**Traditional Pipeline:**
+```
+Camera → Object Detector → Pose Estimator → Motion Planner → PID Controller → Motors
+```
+
+**VLA Approach:**
+```
+Camera + Language → Neural Network → Motors
+```
+
+This unified approach enables:
+- **Generalization**: Transfer learned behaviors to novel objects and tasks
+- **Language grounding**: Natural instruction following ("pick up the red mug")
+- **Emergent behaviors**: Discover strategies not explicitly programmed
+
+## VLA Architecture
+
+### Core Components
+
+```python
+import torch
+import torch.nn as nn
+from transformers import AutoTokenizer, AutoModel
+
+class VLAModel(nn.Module):
+    def __init__(
+        self,
+        vision_encoder,
+        language_model_name="bert-base-uncased",
+        action_dim=14,  # 7 joints * 2 (position, gripper)
+        hidden_dim=512
+    ):
+        super().__init__()
+
+        # Vision encoder (from previous chapter)
+        self.vision_encoder = vision_encoder
+
+        # Language encoder
+        self.tokenizer = AutoTokenizer.from_pretrained(language_model_name)
+        self.language_encoder = AutoModel.from_pretrained(language_model_name)
+
+        # Freeze language model (optional)
+        for param in self.language_encoder.parameters():
+            param.requires_grad = False
+
+        # Cross-modal fusion
+        self.vision_proj = nn.Linear(512, hidden_dim)
+        self.language_proj = nn.Linear(768, hidden_dim)  # BERT hidden size
+
+        self.fusion_attention = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=8,
+            batch_first=True
+        )
+
+        # Action decoder
+        self.action_decoder = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, action_dim)
+        )
+
+    def forward(self, images, text_instructions):
+        """
+        Args:
+            images: (batch, 3, 224, 224)
+            text_instructions: List of strings
+        Returns:
+            actions: (batch, action_dim)
+        """
+        batch_size = images.size(0)
+
+        # Encode vision
+        vision_features = self.vision_encoder(images)  # (batch, 512)
+        vision_proj = self.vision_proj(vision_features)  # (batch, hidden_dim)
+
+        # Encode language
+        tokens = self.tokenizer(
+            text_instructions,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=64
+        ).to(images.device)
+
+        language_outputs = self.language_encoder(**tokens)
+        # Use [CLS] token
+        language_features = language_outputs.last_hidden_state[:, 0, :]  # (batch, 768)
+        language_proj = self.language_proj(language_features)  # (batch, hidden_dim)
+
+        # Cross-modal attention
+        # Query: language, Key/Value: vision
+        vision_seq = vision_proj.unsqueeze(1)  # (batch, 1, hidden_dim)
+        language_seq = language_proj.unsqueeze(1)  # (batch, 1, hidden_dim)
+
+        attended_features, _ = self.fusion_attention(
+            language_seq, vision_seq, vision_seq
+        )  # (batch, 1, hidden_dim)
+
+        fused = attended_features.squeeze(1)  # (batch, hidden_dim)
+
+        # Decode actions
+        actions = self.action_decoder(fused)  # (batch, action_dim)
+
+        return actions
+```
+
+## Training VLA Models
+
+### Data Collection
+
+Collect demonstrations with paired language:
+
+```python
+class RobotDemonstrationDataset(torch.utils.data.Dataset):
+    def __init__(self, data_dir):
+        self.data_dir = data_dir
+        self.episodes = self._load_episodes()
+
+    def _load_episodes(self):
+        episodes = []
+        for episode_file in os.listdir(self.data_dir):
+            with open(os.path.join(self.data_dir, episode_file), 'rb') as f:
+                episode = pickle.load(f)
+                # episode = {
+                #     'images': [(T, 3, 224, 224)],
+                #     'actions': [(T, action_dim)],
+                #     'instruction': "pick up the red mug"
+                # }
+                episodes.append(episode)
+        return episodes
+
+    def __len__(self):
+        return sum(len(ep['images']) for ep in self.episodes)
+
+    def __getitem__(self, idx):
+        # Find episode and timestep
+        for episode in self.episodes:
+            if idx < len(episode['images']):
+                return {
+                    'image': episode['images'][idx],
+                    'action': episode['actions'][idx],
+                    'instruction': episode['instruction']
+                }
+            idx -= len(episode['images'])
+```
+
+### Behavior Cloning
+
+Train via supervised learning on demonstrations:
+
+```python
+from torch.utils.data import DataLoader
+
+# Initialize model
+vision_encoder = ResNetEncoder(output_dim=512)
+vla_model = VLAModel(vision_encoder, action_dim=14)
+
+# Dataset and dataloader
+dataset = RobotDemonstrationDataset('./demonstrations')
+dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+
+# Optimizer
+optimizer = torch.optim.Adam(vla_model.parameters(), lr=3e-4)
+criterion = nn.MSELoss()
+
+# Training loop
+vla_model.train()
+for epoch in range(100):
+    epoch_loss = 0
+    for batch in dataloader:
+        images = batch['image'].cuda()
+        actions = batch['action'].cuda()
+        instructions = batch['instruction']
+
+        # Forward pass
+        predicted_actions = vla_model(images, instructions)
+
+        # Compute loss
+        loss = criterion(predicted_actions, actions)
+
+        # Backward pass
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        epoch_loss += loss.item()
+
+    print(f"Epoch {epoch}: Loss = {epoch_loss / len(dataloader):.4f}")
+
+torch.save(vla_model.state_dict(), "vla_model.pth")
+```
+
+### Diffusion Policy
+
+Instead of regressing actions directly, model action distribution:
+
+```python
+from diffusers import DDPMScheduler
+
+class DiffusionVLA(nn.Module):
+    def __init__(self, vision_encoder, action_dim=14):
+        super().__init__()
+
+        self.vision_encoder = vision_encoder
+        self.noise_pred_net = nn.Sequential(
+            nn.Linear(512 + action_dim + 1, 512),  # +1 for timestep
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, action_dim)
+        )
+
+        self.noise_scheduler = DDPMScheduler(
+            num_train_timesteps=100,
+            beta_schedule="squaredcos_cap_v2"
+        )
+
+    def forward(self, images, noisy_actions, timesteps):
+        # Encode vision
+        vision_features = self.vision_encoder(images)  # (batch, 512)
+
+        # Timestep embedding
+        t_emb = timesteps.unsqueeze(-1).float() / 100.0  # Normalize
+
+        # Concatenate
+        x = torch.cat([vision_features, noisy_actions, t_emb], dim=-1)
+
+        # Predict noise
+        predicted_noise = self.noise_pred_net(x)
+        return predicted_noise
+
+    def get_action(self, image, num_diffusion_steps=20):
+        """Sample action from learned distribution"""
+        self.eval()
+        with torch.no_grad():
+            # Start from random noise
+            action = torch.randn(1, self.action_dim).to(image.device)
+
+            # Denoise iteratively
+            for t in reversed(range(num_diffusion_steps)):
+                timestep = torch.tensor([t]).to(image.device)
+
+                # Predict noise
+                noise_pred = self(image, action, timestep)
+
+                # Denoise
+                action = self.noise_scheduler.step(
+                    noise_pred, t, action
+                ).prev_sample
+
+        return action
+```
+
+## Temporal Context with Transformers
+
+Use history of observations:
+
+```python
+class TemporalVLA(nn.Module):
+    def __init__(self, vision_encoder, context_length=10, action_dim=14):
+        super().__init__()
+
+        self.vision_encoder = vision_encoder
+        self.context_length = context_length
+
+        # Temporal transformer
+        self.temporal_transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=512,
+                nhead=8,
+                dim_feedforward=2048,
+                batch_first=True
+            ),
+            num_layers=4
+        )
+
+        # Action head
+        self.action_head = nn.Linear(512, action_dim)
+
+    def forward(self, image_sequence, instructions):
+        """
+        Args:
+            image_sequence: (batch, seq_len, 3, 224, 224)
+            instructions: List of strings
+        """
+        batch_size, seq_len = image_sequence.shape[:2]
+
+        # Encode each frame
+        vision_features = []
+        for t in range(seq_len):
+            feat = self.vision_encoder(image_sequence[:, t])  # (batch, 512)
+            vision_features.append(feat)
+
+        # Stack: (batch, seq_len, 512)
+        vision_sequence = torch.stack(vision_features, dim=1)
+
+        # Apply temporal transformer
+        temporal_features = self.temporal_transformer(vision_sequence)  # (batch, seq_len, 512)
+
+        # Use last timestep for action
+        current_state = temporal_features[:, -1, :]  # (batch, 512)
+
+        # Decode action
+        action = self.action_head(current_state)  # (batch, action_dim)
+
+        return action
+```
+
+## RT-1: Robotics Transformer
+
+Google's RT-1 architecture for large-scale VLA:
+
+```python
+class RT1(nn.Module):
+    """Simplified RT-1 architecture"""
+
+    def __init__(self, action_dim=11):
+        super().__init__()
+
+        # EfficientNet vision backbone
+        from efficientnet_pytorch import EfficientNet
+        self.vision_backbone = EfficientNet.from_pretrained('efficientnet-b3')
+
+        # Film-conditioned fusion (FiLM = Feature-wise Linear Modulation)
+        self.film_generator = nn.Linear(512, 1536 * 2)  # gamma and beta
+
+        # Token learner (compress spatial features)
+        self.token_learner = nn.Linear(1536, 8)
+
+        # Transformer
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=512,
+                nhead=8,
+                dim_feedforward=2048,
+                batch_first=True
+            ),
+            num_layers=8
+        )
+
+        # Action tokenization
+        self.action_head = nn.Linear(512, action_dim * 256)  # 256 bins per action dim
+
+    def forward(self, images, language_embeddings):
+        # Extract spatial features
+        spatial_features = self.vision_backbone.extract_features(images)  # (B, 1536, 7, 7)
+
+        # FiLM conditioning with language
+        gamma, beta = self.film_generator(language_embeddings).chunk(2, dim=-1)
+        gamma = gamma.unsqueeze(-1).unsqueeze(-1)  # (B, 1536, 1, 1)
+        beta = beta.unsqueeze(-1).unsqueeze(-1)
+
+        # Apply FiLM
+        conditioned = spatial_features * gamma + beta  # (B, 1536, 7, 7)
+
+        # Token learner: reduce spatial dimensions
+        B, C, H, W = conditioned.shape
+        flat = conditioned.view(B, C, H * W).permute(0, 2, 1)  # (B, 49, 1536)
+        token_weights = torch.softmax(self.token_learner(flat), dim=1)  # (B, 49, 8)
+        tokens = torch.bmm(token_weights.transpose(1, 2), flat)  # (B, 8, 1536)
+
+        # Transformer
+        transformed = self.transformer(tokens)  # (B, 8, 512)
+
+        # Action prediction
+        action_logits = self.action_head(transformed[:, 0, :])  # Use first token
+        action_logits = action_logits.view(B, self.action_dim, 256)
+
+        return action_logits
+```
+
+## Deployment
+
+Deploy VLA model on robot:
+
+```python
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from std_msgs.msg import String
+from trajectory_msgs.msg import JointTrajectory
+
+class VLARobotNode(Node):
+    def __init__(self):
+        super().__init__('vla_robot')
+
+        # Load model
+        self.vla_model = VLAModel(ResNetEncoder(), action_dim=14)
+        self.vla_model.load_state_dict(torch.load("vla_model.pth"))
+        self.vla_model.eval()
+        self.vla_model.cuda()
+
+        # Subscribers
+        self.image_sub = self.create_subscription(
+            Image, '/camera/image_raw', self.image_callback, 10
+        )
+        self.command_sub = self.create_subscription(
+            String, '/voice/command', self.command_callback, 10
+        )
+
+        # Publisher
+        self.action_pub = self.create_publisher(JointTrajectory, '/joint_trajectory', 10)
+
+        self.current_image = None
+        self.current_command = "stand still"
+
+    def image_callback(self, msg):
+        # Convert ROS image to tensor
+        self.current_image = self.ros_to_tensor(msg)
+
+    def command_callback(self, msg):
+        self.current_command = msg.data
+        self.execute_action()
+
+    def execute_action(self):
+        if self.current_image is None:
+            return
+
+        # Run inference
+        with torch.no_grad():
+            action = self.vla_model(
+                self.current_image.cuda(),
+                [self.current_command]
+            )
+
+        # Convert to joint trajectory
+        traj_msg = self.action_to_trajectory(action[0].cpu().numpy())
+        self.action_pub.publish(traj_msg)
+
+    def ros_to_tensor(self, ros_image):
+        # Convert ROS Image to PyTorch tensor
+        # Implementation details omitted
+        pass
+
+    def action_to_trajectory(self, action):
+        # Convert action to JointTrajectory message
+        # Implementation details omitted
+        pass
+
+def main():
+    rclpy.init()
+    node = VLARobotNode()
+    rclpy.spin(node)
+```
+
+## Key Takeaways
+
+- VLA models learn end-to-end perception-to-action mappings
+- Cross-modal fusion combines vision and language understanding
+- Behavior cloning provides simple but effective training
+- Diffusion policies model multimodal action distributions
+- Temporal context improves sequential decision-making
+- RT-1 architecture scales to large datasets and diverse tasks
+
+## References
+
+- [RT-1: Robotics Transformer](https://arxiv.org/abs/2212.06817)
+- [RT-2: Vision-Language-Action Models](https://arxiv.org/abs/2307.15818)
+- [Diffusion Policy](https://arxiv.org/abs/2303.04137)
+- [CLIP for Robotics](https://arxiv.org/abs/2201.12086)
+
+## Congratulations!
+
+You've completed the Physical AI & Humanoid Robotics textbook! You now have the foundational knowledge to:
+- Build ROS 2 architectures for robotic systems
+- Simulate and train robots in Gazebo and Isaac Sim
+- Generate synthetic training data at scale
+- Develop vision-language-action models for general manipulation
+
+Continue exploring, building, and pushing the boundaries of physical AI!

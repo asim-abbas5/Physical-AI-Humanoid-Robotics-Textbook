@@ -1,0 +1,329 @@
+openapi: 3.0.3
+info:
+  title: Physical AI Textbook RAG API
+  description: |
+    RAG (Retrieval-Augmented Generation) chatbot API for the Physical AI & Humanoid Robotics textbook.
+    Provides context-aware answers grounded exclusively in textbook content with section citations.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: https://api.yourproject.com/v1
+    description: Production server
+  - url: http://localhost:8000/v1
+    description: Local development server
+
+paths:
+  /query:
+    post:
+      summary: Submit RAG query
+      description: |
+        Submit a natural language question to the RAG chatbot. The system retrieves relevant
+        textbook chunks via vector search and generates a grounded response with citations.
+      operationId: submitQuery
+      tags:
+        - RAG
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+      responses:
+        '200':
+          description: Successful query response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health:
+    get:
+      summary: Health check
+      description: Check API and database connectivity status
+      operationId: healthCheck
+      tags:
+        - System
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /sections:
+    get:
+      summary: List all sections
+      description: Get metadata for all textbook sections
+      operationId: listSections
+      tags:
+        - Content
+      responses:
+        '200':
+          description: List of sections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SectionMetadata'
+
+components:
+  schemas:
+    QueryRequest:
+      type: object
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          minLength: 10
+          maxLength: 500
+          description: User's natural language question
+          example: "How do ROS 2 topics enable communication between nodes?"
+        selected_text:
+          type: string
+          maxLength: 1000
+          description: Optional text selected by user (for context)
+          example: "publish-subscribe architecture"
+        context_section:
+          type: string
+          description: Current section ID for context-aware retrieval
+          example: "module-01-ros2/01-nodes-topics"
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 10
+          default: 3
+          description: Number of chunks to retrieve from vector database
+          example: 3
+
+    QueryResponse:
+      type: object
+      required:
+        - response
+        - citations
+        - confidence
+        - response_time_ms
+      properties:
+        response:
+          type: string
+          description: Generated answer grounded in textbook content
+          example: "ROS 2 topics use a publish-subscribe architecture where nodes communicate asynchronously. Publishers send messages to named topics, and subscribers receive messages from topics they've subscribed to. This decouples message producers from consumers, enabling flexible system architectures."
+        citations:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/Citation'
+          description: Section citations supporting the response
+        retrieved_chunks:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetrievedChunk'
+          description: Raw chunks retrieved from vector search
+        confidence:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Confidence score based on top-1 similarity
+          example: 0.87
+        response_time_ms:
+          type: integer
+          minimum: 0
+          description: Query processing latency in milliseconds
+          example: 1250
+
+    Citation:
+      type: object
+      required:
+        - section_id
+        - section_title
+        - module_title
+        - url
+      properties:
+        section_id:
+          type: string
+          description: Unique section identifier
+          example: "01-nodes-topics"
+        section_title:
+          type: string
+          description: Human-readable section title
+          example: "ROS 2 Nodes and Topics"
+        module_id:
+          type: string
+          description: Parent module identifier
+          example: "module-01-ros2"
+        module_title:
+          type: string
+          description: Parent module title
+          example: "Module 1: The Robotic Nervous System (ROS 2)"
+        url:
+          type: string
+          format: uri
+          description: Relative URL to section in deployed textbook
+          example: "/docs/module-01-ros2/01-nodes-topics"
+        excerpt:
+          type: string
+          description: Brief quote from section supporting the citation
+          example: "Topics enable asynchronous, many-to-many communication..."
+
+    RetrievedChunk:
+      type: object
+      required:
+        - chunk_id
+        - section_id
+        - text
+        - similarity_score
+        - rank
+      properties:
+        chunk_id:
+          type: string
+          format: uuid
+          description: Unique chunk identifier
+          example: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        section_id:
+          type: string
+          description: Section containing this chunk
+          example: "01-nodes-topics"
+        module_id:
+          type: string
+          description: Module containing this chunk
+          example: "module-01-ros2"
+        text:
+          type: string
+          description: Raw chunk text (200-300 words)
+          example: "ROS 2 topics are named buses over which nodes exchange messages..."
+        similarity_score:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 1.0
+          description: Cosine similarity to query embedding
+          example: 0.87
+        rank:
+          type: integer
+          minimum: 1
+          description: Ranking position (1 = most relevant)
+          example: 1
+
+    SectionMetadata:
+      type: object
+      required:
+        - section_id
+        - module_id
+        - title
+        - word_count
+        - flesch_kincaid_grade
+      properties:
+        section_id:
+          type: string
+          example: "01-nodes-topics"
+        module_id:
+          type: string
+          example: "module-01-ros2"
+        title:
+          type: string
+          example: "ROS 2 Nodes and Topics"
+        word_count:
+          type: integer
+          minimum: 1500
+          maximum: 2500
+          example: 2150
+        flesch_kincaid_grade:
+          type: number
+          format: float
+          minimum: 8.0
+          maximum: 12.0
+          example: 10.2
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-12-06T10:30:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-12-06T15:45:00Z"
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - timestamp
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+          example: "2025-12-06T12:00:00Z"
+        services:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [connected, disconnected]
+              example: "connected"
+            qdrant:
+              type: string
+              enum: [connected, disconnected]
+              example: "connected"
+            embedding_model:
+              type: string
+              enum: [loaded, not_loaded]
+              example: "loaded"
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          example: "ValidationError"
+        message:
+          type: string
+          example: "Query text must be at least 10 characters"
+        details:
+          type: object
+          additionalProperties: true
+          example:
+            field: "query"
+            provided_length: 5
+            required_min_length: 10
+
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for authentication (optional for MVP, required for production)
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: RAG
+    description: RAG query operations
+  - name: Content
+    description: Textbook content metadata
+  - name: System
+    description: System health and monitoring

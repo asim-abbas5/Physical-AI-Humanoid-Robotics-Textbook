@@ -1,0 +1,389 @@
+---
+title: 'Vision Encoders'
+description: 'Encoding camera observations into action-ready representations'
+---
+
+# Vision Encoders
+
+## The Vision Challenge
+
+Humanoid robots must perceive their environment from camera pixels to make decisions. Unlike classification tasks ("Is this a cat?"), robotic perception requires:
+
+- **Spatial understanding**: Where is the object?
+- **3D reasoning**: How far away? What orientation?
+- **Action affordances**: Can I grasp this? Where to place my hand?
+- **Dynamic tracking**: How is the scene changing?
+
+Vision encoders compress high-dimensional images (640x480x3 = 921,600 values) into compact, action-relevant representations (256-1024 values).
+
+## Vision Encoder Architectures
+
+### Convolutional Neural Networks (CNNs)
+
+Classical approach for spatial feature extraction:
+
+```python
+import torch
+import torch.nn as nn
+
+class CNNEncoder(nn.Module):
+    def __init__(self, input_channels=3, output_dim=512):
+        super().__init__()
+
+        self.conv_layers = nn.Sequential(
+            # 224x224x3 -> 112x112x32
+            nn.Conv2d(input_channels, 32, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+
+            # 112x112x32 -> 56x56x64
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+
+            # 56x56x64 -> 28x28x128
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+
+            # 28x28x128 -> 14x14x256
+            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(256),
+
+            # 14x14x256 -> 7x7x512
+            nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(512),
+        )
+
+        # Spatial pooling
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+
+        # Final projection
+        self.fc = nn.Linear(512, output_dim)
+
+    def forward(self, x):
+        # x: (batch, 3, 224, 224)
+        features = self.conv_layers(x)  # (batch, 512, 7, 7)
+        pooled = self.pool(features)  # (batch, 512, 1, 1)
+        flattened = pooled.view(pooled.size(0), -1)  # (batch, 512)
+        encoded = self.fc(flattened)  # (batch, output_dim)
+        return encoded
+```
+
+### ResNet Backbone
+
+Use pretrained ImageNet weights for better generalization:
+
+```python
+import torchvision.models as models
+
+class ResNetEncoder(nn.Module):
+    def __init__(self, output_dim=512, pretrained=True):
+        super().__init__()
+
+        # Load pretrained ResNet-18
+        resnet = models.resnet18(pretrained=pretrained)
+
+        # Remove final FC layer
+        self.backbone = nn.Sequential(*list(resnet.children())[:-1])
+
+        # Custom projection head
+        self.projection = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, output_dim)
+        )
+
+    def forward(self, x):
+        # x: (batch, 3, 224, 224)
+        features = self.backbone(x)  # (batch, 512, 1, 1)
+        features = features.view(features.size(0), -1)  # (batch, 512)
+        encoded = self.projection(features)  # (batch, output_dim)
+        return encoded
+```
+
+### Vision Transformers (ViT)
+
+Self-attention for global context:
+
+```python
+from transformers import ViTModel, ViTImageProcessor
+
+class ViTEncoder(nn.Module):
+    def __init__(self, output_dim=768, model_name="google/vit-base-patch16-224"):
+        super().__init__()
+
+        # Load pretrained ViT
+        self.processor = ViTImageProcessor.from_pretrained(model_name)
+        self.vit = ViTModel.from_pretrained(model_name)
+
+        # Projection to desired output dimension
+        self.projection = nn.Linear(768, output_dim)
+
+    def forward(self, images):
+        # images: (batch, 3, 224, 224) - PyTorch tensor
+
+        # ViT expects pre-processed inputs
+        # In practice, do this preprocessing outside the model
+        outputs = self.vit(pixel_values=images)
+
+        # Use [CLS] token embedding
+        cls_embedding = outputs.last_hidden_state[:, 0]  # (batch, 768)
+
+        # Project to output dimension
+        encoded = self.projection(cls_embedding)  # (batch, output_dim)
+        return encoded
+```
+
+### CLIP Vision Encoder
+
+Pretrained on 400M image-text pairs for robust visual understanding:
+
+```python
+import clip
+import torch
+
+class CLIPVisionEncoder(nn.Module):
+    def __init__(self, output_dim=512, device='cuda'):
+        super().__init__()
+
+        # Load CLIP model
+        self.clip_model, self.preprocess = clip.load("ViT-B/32", device=device)
+
+        # Freeze CLIP weights (optional)
+        for param in self.clip_model.parameters():
+            param.requires_grad = False
+
+        # Projection layer
+        self.projection = nn.Linear(512, output_dim).to(device)
+
+    def forward(self, images):
+        # images: (batch, 3, 224, 224)
+
+        # Encode with CLIP
+        with torch.no_grad():
+            image_features = self.clip_model.encode_image(images)  # (batch, 512)
+
+        # Normalize features
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+
+        # Project if needed
+        encoded = self.projection(image_features)  # (batch, output_dim)
+        return encoded
+```
+
+## Spatial Feature Maps vs Global Embeddings
+
+### Global Embeddings
+
+Single vector per image (e.g., 512-dim):
+- **Pros**: Compact, easy to process with MLPs
+- **Cons**: Loses spatial information
+- **Use case**: Object-centric tasks (grasping known objects)
+
+### Spatial Feature Maps
+
+Grid of feature vectors (e.g., 7x7x512):
+- **Pros**: Preserves spatial layout
+- **Cons**: Larger, requires spatial attention
+- **Use case**: Navigation, multi-object scenes
+
+```python
+class SpatialEncoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        resnet = models.resnet18(pretrained=True)
+        # Keep spatial dimensions (remove pooling)
+        self.backbone = nn.Sequential(*list(resnet.children())[:-2])
+
+    def forward(self, x):
+        # x: (batch, 3, 224, 224)
+        spatial_features = self.backbone(x)  # (batch, 512, 7, 7)
+        return spatial_features
+```
+
+## Multi-View Encoding
+
+Humanoid robots have multiple cameras (head, hands, chest):
+
+```python
+class MultiViewEncoder(nn.Module):
+    def __init__(self, num_views=3, output_dim=512):
+        super().__init__()
+
+        # Shared encoder for all views
+        self.single_view_encoder = ResNetEncoder(output_dim=256)
+
+        # View-specific attention
+        self.view_attention = nn.MultiheadAttention(
+            embed_dim=256,
+            num_heads=4,
+            batch_first=True
+        )
+
+        # Final fusion
+        self.fusion = nn.Linear(256, output_dim)
+
+    def forward(self, views):
+        # views: dict with keys ['head', 'left_hand', 'right_hand']
+        # Each view: (batch, 3, 224, 224)
+
+        # Encode each view
+        encoded_views = []
+        for view_name in ['head', 'left_hand', 'right_hand']:
+            encoded = self.single_view_encoder(views[view_name])  # (batch, 256)
+            encoded_views.append(encoded)
+
+        # Stack views: (batch, num_views, 256)
+        stacked = torch.stack(encoded_views, dim=1)
+
+        # Apply cross-view attention
+        attended, _ = self.view_attention(stacked, stacked, stacked)  # (batch, 3, 256)
+
+        # Pool across views
+        pooled = attended.mean(dim=1)  # (batch, 256)
+
+        # Final projection
+        fused = self.fusion(pooled)  # (batch, output_dim)
+        return fused
+```
+
+## Depth Integration
+
+Combine RGB with depth for 3D understanding:
+
+```python
+class RGBDEncoder(nn.Module):
+    def __init__(self, output_dim=512):
+        super().__init__()
+
+        # RGB stream
+        self.rgb_encoder = CNNEncoder(input_channels=3, output_dim=256)
+
+        # Depth stream
+        self.depth_encoder = CNNEncoder(input_channels=1, output_dim=256)
+
+        # Fusion
+        self.fusion = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, output_dim)
+        )
+
+    def forward(self, rgb, depth):
+        # rgb: (batch, 3, 224, 224)
+        # depth: (batch, 1, 224, 224)
+
+        rgb_features = self.rgb_encoder(rgb)  # (batch, 256)
+        depth_features = self.depth_encoder(depth)  # (batch, 256)
+
+        # Concatenate
+        combined = torch.cat([rgb_features, depth_features], dim=1)  # (batch, 512)
+
+        # Fuse
+        fused = self.fusion(combined)  # (batch, output_dim)
+        return fused
+```
+
+## Temporal Encoding
+
+Stack frames for motion understanding:
+
+```python
+class TemporalEncoder(nn.Module):
+    def __init__(self, num_frames=4, output_dim=512):
+        super().__init__()
+
+        # 3D convolutions for spatiotemporal features
+        self.conv3d = nn.Sequential(
+            nn.Conv3d(3, 32, kernel_size=(3, 3, 3), stride=(1, 2, 2), padding=(1, 1, 1)),
+            nn.ReLU(),
+            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), stride=(1, 2, 2), padding=(1, 1, 1)),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool3d((1, 7, 7))
+        )
+
+        self.fc = nn.Linear(64 * 7 * 7, output_dim)
+
+    def forward(self, frame_stack):
+        # frame_stack: (batch, num_frames, 3, 224, 224)
+
+        # Rearrange to (batch, channels, time, height, width)
+        x = frame_stack.permute(0, 2, 1, 3, 4)  # (batch, 3, num_frames, 224, 224)
+
+        # 3D convolutions
+        features = self.conv3d(x)  # (batch, 64, 1, 7, 7)
+
+        # Flatten
+        flattened = features.view(features.size(0), -1)
+
+        # Final encoding
+        encoded = self.fc(flattened)  # (batch, output_dim)
+        return encoded
+```
+
+## Training Strategies
+
+### Supervised Pretraining
+
+```python
+# Fine-tune on robot-specific task
+encoder = ResNetEncoder(output_dim=512, pretrained=True)
+
+# Example: object detection for grasping
+detector = nn.Sequential(
+    encoder,
+    nn.Linear(512, 4)  # (x, y, width, height)
+)
+
+# Train on synthetic data
+optimizer = torch.optim.Adam(detector.parameters(), lr=1e-4)
+criterion = nn.SmoothL1Loss()
+
+for images, bboxes in dataloader:
+    predictions = detector(images)
+    loss = criterion(predictions, bboxes)
+    loss.backward()
+    optimizer.step()
+```
+
+### Self-Supervised Learning
+
+```python
+# Contrastive learning (SimCLR)
+from lightly.models.modules import SimCLRProjectionHead
+from lightly.loss import NTXentLoss
+
+encoder = ResNetEncoder(output_dim=512)
+projection_head = SimCLRProjectionHead(512, 512, 128)
+criterion = NTXentLoss()
+
+for (x0, x1) in dataloader:  # x0, x1: augmented views
+    z0 = projection_head(encoder(x0))
+    z1 = projection_head(encoder(x1))
+    loss = criterion(z0, z1)
+    loss.backward()
+    optimizer.step()
+```
+
+## Key Takeaways
+
+- Vision encoders compress images into action-relevant representations
+- CNNs capture spatial features, ViTs provide global context
+- Pretrained models (ImageNet, CLIP) improve sample efficiency
+- Multi-view and depth integration enhance 3D understanding
+- Temporal encoding captures motion and dynamics
+- Self-supervised learning reduces need for labeled data
+
+## References
+
+- [ResNet Paper](https://arxiv.org/abs/1512.03385)
+- [Vision Transformers (ViT)](https://arxiv.org/abs/2010.11929)
+- [CLIP Paper](https://arxiv.org/abs/2103.00020)
+- [SimCLR](https://arxiv.org/abs/2002.05709)
+
+## Next Steps
+
+We'll combine vision encoders with language models and action decoders to build complete VLA systems that understand "pick up the red mug" and execute the task.

@@ -1,0 +1,16 @@
+.authButtonsContainer {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  padding: 0 0.5rem;
+}
+
+@media (max-width: 996px) {
+  .authButtonsContainer {
+    margin-top: 1rem;
+    padding: 1rem 0;
+    border-top: 1px solid var(--ifm-toc-border-color);
+    width: 100%;
+    justify-content: center;
+  }
+}

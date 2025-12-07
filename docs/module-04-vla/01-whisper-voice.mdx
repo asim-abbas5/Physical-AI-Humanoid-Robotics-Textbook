@@ -1,0 +1,200 @@
+---
+title: 'Voice Control'
+description: 'Integrating OpenAI Whisper for speech recognition in robotic systems'
+---
+
+# Voice Control
+
+## Introduction to VLA Components
+
+Vision-Language-Action models combine three modalities:
+- **Vision**: Camera observations of the scene
+- **Language**: Natural language commands and descriptions
+- **Action**: Robot motor commands
+
+Before building end-to-end VLA models, we'll explore each component individually. This section focuses on the language input pipeline using OpenAI's Whisper for robust speech recognition.
+
+## Why Whisper?
+
+Whisper is a transformer-based speech recognition model trained on 680,000 hours of multilingual audio. For robotics, Whisper offers:
+
+- **Noise Robustness**: Works in noisy environments (factories, homes)
+- **Multilingual**: Supports 99 languages including Hindi, Urdu, Mandarin
+- **No Fine-Tuning Needed**: Zero-shot performance on domain-specific vocabulary
+- **Local Inference**: Runs offline without cloud APIs
+
+This makes Whisper ideal for humanoid robots operating in uncontrolled environments with diverse users.
+
+## Installation
+
+Install Whisper and dependencies:
+
+```bash
+pip install openai-whisper torch torchaudio
+```
+
+For real-time microphone input:
+
+```bash
+pip install sounddevice numpy scipy
+```
+
+## Basic Speech Recognition
+
+Let's transcribe an audio file:
+
+```python
+import whisper
+
+# Load model (options: tiny, base, small, medium, large)
+model = whisper.load_model("base")
+
+# Transcribe audio
+result = model.transcribe("robot_command.mp3")
+
+print(f"Transcription: {result['text']}")
+print(f"Language: {result['language']}")
+print(f"Confidence: {result.get('avg_logprob', 0)}")
+```
+
+Model sizes and performance:
+
+| Model  | Parameters | VRAM | Speed (CPU) | WER  |
+|--------|-----------|------|-------------|------|
+| tiny   | 39M       | ~1GB | ~10x        | 7.5% |
+| base   | 74M       | ~1GB | ~7x         | 5.5% |
+| small  | 244M      | ~2GB | ~4x         | 4.3% |
+| medium | 769M      | ~5GB | ~2x         | 3.4% |
+| large  | 1550M     | ~10GB| ~1x         | 2.9% |
+
+For real-time robotics, use `base` or `small` models.
+
+## Real-Time Microphone Input
+
+Capture live audio and transcribe:
+
+```python
+import whisper
+import sounddevice as sd
+import numpy as np
+import queue
+import threading
+
+class RealtimeWhisper:
+    def __init__(self, model_size="base"):
+        self.model = whisper.load_model(model_size)
+        self.audio_queue = queue.Queue()
+        self.sample_rate = 16000
+        self.running = False
+
+    def audio_callback(self, indata, frames, time, status):
+        """Called for each audio block"""
+        self.audio_queue.put(indata.copy())
+
+    def start_listening(self, duration=5):
+        """Record audio for specified duration"""
+        self.running = True
+        audio_data = []
+
+        with sd.InputStream(
+            samplerate=self.sample_rate,
+            channels=1,
+            callback=self.audio_callback
+        ):
+            print(f"Listening for {duration} seconds...")
+            while len(audio_data) < duration * self.sample_rate:
+                chunk = self.audio_queue.get()
+                audio_data.append(chunk)
+
+        # Concatenate chunks and transcribe
+        audio_np = np.concatenate(audio_data, axis=0).flatten()
+        result = self.model.transcribe(audio_np, fp16=False)
+        return result['text']
+
+# Usage
+whisper_listener = RealtimeWhisper(model_size="base")
+command = whisper_listener.start_listening(duration=3)
+print(f"Command: {command}")
+```
+
+## Integrating with ROS 2
+
+Create a ROS 2 node that publishes transcriptions:
+
+```python
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String
+import whisper
+import sounddevice as sd
+import numpy as np
+
+class WhisperNode(Node):
+    def __init__(self):
+        super().__init__('whisper_node')
+        self.publisher = self.create_publisher(String, '/voice/command', 10)
+        self.model = whisper.load_model("base")
+        self.sample_rate = 16000
+
+        # Listen for wake word, then transcribe
+        self.timer = self.create_timer(0.5, self.listen_callback)
+
+    def listen_callback(self):
+        # Record 3 seconds of audio
+        audio = sd.rec(
+            int(3 * self.sample_rate),
+            samplerate=self.sample_rate,
+            channels=1
+        )
+        sd.wait()
+
+        # Transcribe
+        result = self.model.transcribe(audio.flatten(), fp16=False)
+        command = result['text'].strip()
+
+        if command:
+            msg = String()
+            msg.data = command
+            self.publisher.publish(msg)
+            self.get_logger().info(f'Published command: {command}')
+
+def main():
+    rclpy.init()
+    node = WhisperNode()
+    rclpy.spin(node)
+    rclpy.shutdown()
+```
+
+## Optimizing for Low Latency
+
+For real-time robotics (&lt;500ms latency):
+
+1. **Use Smaller Models**: `tiny` or `base` models
+2. **GPU Inference**: Enable CUDA with `fp16=True`
+3. **Voice Activity Detection**: Only transcribe when speech detected
+4. **Streaming**: Use `whisper-streaming` package for incremental results
+
+## Wake Word Detection
+
+Avoid continuous transcription by detecting wake words first:
+
+```python
+from pocketsphinx import LiveSpeech
+
+# Listen for "hey robot" wake word
+for phrase in LiveSpeech(keyphrase='hey robot', kws_threshold=1e-20):
+    print("Wake word detected! Starting Whisper...")
+    # Now activate Whisper for command transcription
+    command = whisper_listener.start_listening(duration=3)
+    process_command(command)
+```
+
+## Next Steps
+
+Now that we have robust speech input, we'll combine it with vision encoders and action decoders to build complete VLA models that map "pick up the red mug" to motor commands.
+
+## References
+
+- [Whisper Paper](https://arxiv.org/abs/2212.04356)
+- [OpenAI Whisper GitHub](https://github.com/openai/whisper)
+- [Whisper Model Card](https://github.com/openai/whisper/blob/main/model-card.md)
